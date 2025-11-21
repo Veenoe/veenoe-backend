@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+motor
+beanie
+python-dotenv
+google-genai
+pydantic-settings

@@ -1,0 +1,48 @@
+# --- Python Virtual Environments ---
+# Ignore the virtual environment folder created by uv or venv
+.venv/
+venv/
+backend/
+env/
+
+# --- Python Cache ---
+# Ignore compiled Python files and cache directories
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Secrets ---
+# CRITICAL: Ignore all .env files and their variants
+.env
+.env.*
+*.env
+
+# --- IDE & Editor Config ---
+# Ignore common IDE and editor-specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS-specific files ---
+# Ignore macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Ignore Windows
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# --- Uvicorn ---
+# Ignore uvicorn's hot-reload temp files
+.uvicorn.reload
+
+# --- Beanie ---
+# If you ever generate diagrams (optional)
+.beanie_diagram.png
+
+# --- Testing ---
+.pytest_cache/
+.coverage
