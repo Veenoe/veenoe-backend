@@ -29,16 +29,16 @@ router = APIRouter()
 async def start_viva(request: VivaStartRequest):
     """
     Starts a new viva session.
-    
+
     This endpoint:
     1. Receives student details (name, topic, class).
     2. Calls the service layer to create a new VivaSession in the database.
     3. Calls the service layer to generate a secure ephemeral token from Google.
     4. Returns the session ID and the token to the client.
-    
+
     Args:
         request (VivaStartRequest): The request body containing student details.
-    
+
     Returns:
         VivaStartResponse: Session ID, ephemeral token, and model name.
     """
@@ -53,14 +53,14 @@ async def start_viva(request: VivaStartRequest):
 async def get_question(request: GetNextQuestionRequest):
     """
     Fetches the next question for the viva.
-    
+
     This endpoint is called by the FRONTEND when the AI (via Live API)
     requests a new question using the get_next_question function.
-    
+
     Args:
-        request (GetNextQuestionRequest): Contains viva_session_id, topic, 
+        request (GetNextQuestionRequest): Contains viva_session_id, topic,
                                           class_level, and current_difficulty.
-    
+
     Returns:
         GetNextQuestionResponse: The question text and difficulty.
     """
@@ -82,13 +82,13 @@ async def get_question(request: GetNextQuestionRequest):
 async def evaluate_response(request: EvaluateResponseRequest):
     """
     Evaluates and saves the student's response.
-    
+
     This endpoint is called by the FRONTEND when the AI (via Live API)
     wants to evaluate a student's answer using the evaluate_and_save_response function.
-    
+
     Args:
         request (EvaluateResponseRequest): Contains all evaluation details.
-    
+
     Returns:
         EvaluateResponseResponse: Confirmation of saved evaluation.
     """
@@ -100,6 +100,7 @@ async def evaluate_response(request: EvaluateResponseRequest):
             student_answer=request.student_answer,
             evaluation=request.evaluation,
             is_correct=request.is_correct,
+            question_id=request.question_id,
         )
         return EvaluateResponseResponse(**result)
     except Exception as e:
@@ -112,13 +113,13 @@ async def evaluate_response(request: EvaluateResponseRequest):
 async def conclude_viva(request: ConcludeVivaRequest):
     """
     Concludes the viva session and generates final summary.
-    
+
     This endpoint is called by the FRONTEND when the AI (via Live API)
     wants to end the viva using the conclude_viva function.
-    
+
     Args:
         request (ConcludeVivaRequest): Contains viva_session_id and final_feedback.
-    
+
     Returns:
         ConcludeVivaResponse: Confirmation and final summary.
     """
@@ -129,6 +130,4 @@ async def conclude_viva(request: ConcludeVivaRequest):
         )
         return ConcludeVivaResponse(**result)
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error concluding viva: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error concluding viva: {str(e)}")

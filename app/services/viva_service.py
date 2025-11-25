@@ -10,6 +10,8 @@ from app.schemas.viva import VivaStartRequest
 from app.services.gemini_service import create_ephemeral_token, MODEL_NAME
 import datetime
 from bson import ObjectId
+from beanie.operators import NotIn
+from typing import Optional
 
 
 # --- Main Service Functions ---
@@ -85,7 +87,7 @@ async def get_next_question(
         QuestionBank.topic == topic,
         QuestionBank.class_level == class_level,
         QuestionBank.difficulty == difficulty,
-        QuestionBank.id.not_in(asked_question_ids),
+        NotIn(QuestionBank.id, asked_question_ids),
     )
 
     if not question:
@@ -93,7 +95,7 @@ async def get_next_question(
         question = await QuestionBank.find_one(
             QuestionBank.topic == topic,
             QuestionBank.class_level == class_level,
-            QuestionBank.id.not_in(asked_question_ids),
+            NotIn(QuestionBank.id, asked_question_ids),
         )
 
     if not question:
@@ -115,6 +117,7 @@ async def evaluate_and_save_response(
     student_answer: str,
     evaluation: str,
     is_correct: bool,
+    question_id: Optional[str] = None,
 ) -> dict:
     """
     Saves the student's answer and AI's evaluation to the database.
@@ -142,6 +145,7 @@ async def evaluate_and_save_response(
         turn_id=turn_id,
         question_text=question_text,
         difficulty=difficulty,
+        question_id=question_id,
         student_answer_transcription=student_answer,
         ai_evaluation=evaluation,
         is_correct=is_correct,

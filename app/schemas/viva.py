@@ -86,6 +86,7 @@ class EvaluateResponseRequest(BaseModel):
 
     viva_session_id: str
     question_text: str
+    question_id: Optional[str] = None
     difficulty: int = Field(..., ge=1, le=5)
     student_answer: str
     evaluation: str

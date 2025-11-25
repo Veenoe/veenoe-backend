@@ -55,6 +55,10 @@ evaluate_and_save_response_tool = {
                 "type": "STRING",
                 "description": "The text of the question that was asked.",
             },
+            "question_id": {
+                "type": "STRING",
+                "description": "The ID of the question that was asked.",
+            },
             "difficulty": {
                 "type": "NUMBER",
                 "description": "The difficulty level of the question (1-5).",
@@ -75,6 +79,7 @@ evaluate_and_save_response_tool = {
         "required": [
             "viva_session_id",
             "question_text",
+            "question_id",
             "difficulty",
             "student_answer",
             "evaluation",
@@ -219,13 +224,11 @@ async def create_ephemeral_token(viva_request: VivaStartRequest) -> dict:
 
     # Create the token using the v1alpha API
     # Use client.aio.auth_tokens.create for async call
-    token = await client.aio.auth_tokens.create(
-        config=token_config
-    )
+    token = await client.aio.auth_tokens.create(config=token_config)
 
     # FIX: The token string is in the 'name' attribute, NOT 'token'
     return {
-        "token": token.name, 
+        "token": token.name,
         "voice_name": viva_request.voice_name or "Kore",
         "session_duration_minutes": 10,
     }
