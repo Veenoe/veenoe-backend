@@ -16,77 +16,7 @@ from app.schemas.viva import VivaStartRequest
 MODEL_NAME = "gemini-2.5-flash-native-audio-preview-09-2025"
 
 # --- Define the Tools the AI can use ---
-# These are function declarations, following the OpenAPI 3.0 subset
-# that Google's API uses.
-
-get_next_question_tool = {
-    "name": "get_next_question",
-    "description": "Fetches the next question for the viva based on topic and class level.",
-    "behavior": "NON_BLOCKING",  # Async execution - doesn't block conversation
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "topic": {"type": "STRING", "description": "The subject of the viva."},
-            "class_level": {
-                "type": "NUMBER",
-                "description": "The student's grade or class level.",
-            },
-            "current_difficulty": {
-                "type": "NUMBER",
-                "description": "The difficulty level for the next question (1-5).",
-            },
-        },
-        "required": ["topic", "class_level", "current_difficulty"],
-    },
-}
-
-evaluate_and_save_response_tool = {
-    "name": "evaluate_and_save_response",
-    "description": "Evaluates the student's response and saves it to the database.",
-    "behavior": "NON_BLOCKING",  # Async execution - doesn't block conversation
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "viva_session_id": {
-                "type": "STRING",
-                "description": "The ID of the current viva session.",
-            },
-            "question_text": {
-                "type": "STRING",
-                "description": "The text of the question that was asked.",
-            },
-            "question_id": {
-                "type": "STRING",
-                "description": "The ID of the question that was asked.",
-            },
-            "difficulty": {
-                "type": "NUMBER",
-                "description": "The difficulty level of the question (1-5).",
-            },
-            "student_answer": {
-                "type": "STRING",
-                "description": "The student's transcribed answer.",
-            },
-            "evaluation": {
-                "type": "STRING",
-                "description": "Your evaluation of the student's answer.",
-            },
-            "is_correct": {
-                "type": "BOOLEAN",
-                "description": "Whether the answer was correct or not.",
-            },
-        },
-        "required": [
-            "viva_session_id",
-            "question_text",
-            "question_id",
-            "difficulty",
-            "student_answer",
-            "evaluation",
-            "is_correct",
-        ],
-    },
-}
+# Only conclude_viva is needed now.
 
 conclude_viva_tool = {
     "name": "conclude_viva",
@@ -102,8 +32,12 @@ conclude_viva_tool = {
                 "type": "STRING",
                 "description": "Your final feedback and summary for the student.",
             },
+            "score": {
+                "type": "INTEGER",
+                "description": "Final score out of 10.",
+            },
         },
-        "required": ["viva_session_id", "final_feedback"],
+        "required": ["viva_session_id", "final_feedback", "score"],
     },
 }
 
@@ -125,34 +59,32 @@ You are an expert oral examiner conducting a viva (oral examination) for a stude
 **Student Name:** {viva_request.student_name}
 **Topic:** {viva_request.topic}
 **Class Level:** {viva_request.class_level}
-**Session Duration:** 10 minutes maximum
+**Session Duration:** 5 minutes maximum
 
 **Your Role:**
-1. You will ask the student questions on the topic, starting at difficulty level 3.
-2. Listen to the student's spoken answers carefully.
-3. Evaluate each answer and provide constructive feedback.
-4. Adjust the difficulty of subsequent questions based on performance:
-   - If the student answers correctly, increase difficulty.
-   - If the student struggles, decrease difficulty or provide hints.
-5. Ask approximately 5-7 questions in total.
-6. At the end, provide a comprehensive summary of the student's performance.
+1.  **Welcome**: Start by welcoming the student and stating the topic.
+2.  **Questioning**: Ask **one question at a time**. Wait for the student's answer.
+    -   Generate questions dynamically based on the topic and the student's responses.
+    -   Start with easier questions and increase difficulty if they answer correctly.
+    -   If they struggle, provide a hint or ask a simpler follow-up.
+3.  **Evaluation**: Internally evaluate their answers. Do not explicitly state 'Correct' or 'Incorrect' after every answer, but guide the conversation naturally.
+4.  **Conclusion**: After asking 5-7 questions or if the time is up, conclude the session.
+    -   Use the `conclude_viva` tool to submit the final score (out of 10) and detailed feedback.
+    -   Say a polite goodbye to the student.
 
 **Important Session Limits:**
-- The session is limited to 10 minutes.
+- The session is limited to 5 minutes.
 - You will receive a warning before the session ends.
 - Conclude the viva gracefully if you receive a termination warning.
 
 **Tools You Must Use:**
-- **get_next_question**: Use this to fetch the next question from the database. You MUST call this for each new question.
-- **evaluate_and_save_response**: After the student answers, use this to evaluate and save their response.
 - **conclude_viva**: When you've asked enough questions or time is running out, use this to end the viva and generate final feedback.
 
 **Important Instructions:**
 - Speak naturally and encouragingly in audio responses.
 - Wait for the student to finish speaking before evaluating.
 - Be supportive but accurate in your evaluations.
-- Start by greeting the student and asking the first question using get_next_question.
-- These function calls are non-blocking, so you can continue the conversation while they execute.
+- Do NOT ask multiple questions at once. Keep your responses concise.
 """
     return system_instruction.strip()
 
@@ -176,8 +108,6 @@ async def create_ephemeral_token(viva_request: VivaStartRequest) -> dict:
 
     # Combine all tool declarations into a single list
     tool_declarations = [
-        get_next_question_tool,
-        evaluate_and_save_response_tool,
         conclude_viva_tool,
     ]
 
@@ -203,15 +133,15 @@ async def create_ephemeral_token(viva_request: VivaStartRequest) -> dict:
     if viva_request.enable_thinking and viva_request.thinking_budget > 0:
         live_config["thinking_config"] = {
             "thinking_budget": viva_request.thinking_budget,
-            "include_thoughts": True,  # Include thought summaries in responses
+            "include_thoughts": False,  # Do not include thought summaries in responses
         }
 
     # Configure the ephemeral token with Live API constraints
-    # Session limited to 10 minutes
+    # Session limited to 5 minutes
     token_config = {
         "uses": 1,  # Token can only be used once
         "expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
-        + datetime.timedelta(minutes=10),  # 10-minute session limit
+        + datetime.timedelta(minutes=5),  # 5-minute session limit
         "new_session_expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
         + datetime.timedelta(minutes=2),  # 2 minutes to start session
         "live_connect_constraints": {
@@ -230,5 +160,5 @@ async def create_ephemeral_token(viva_request: VivaStartRequest) -> dict:
     return {
         "token": token.name,
         "voice_name": viva_request.voice_name or "Kore",
-        "session_duration_minutes": 10,
+        "session_duration_minutes": 5,
     }
