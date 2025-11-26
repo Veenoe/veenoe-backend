@@ -6,11 +6,16 @@ It is responsible for:
 - Creating secure, short-lived ephemeral tokens for the client.
 """
 
+import logging
 import google.genai as genai
 from google.genai import types
 import datetime
 from app.core.config import settings
 from app.schemas.viva import VivaStartRequest
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # The specific model to be used for the viva
 MODEL_NAME = "gemini-2.5-flash-native-audio-preview-09-2025"
@@ -53,6 +58,10 @@ def generate_system_instruction(viva_request: VivaStartRequest) -> str:
     Returns:
         str: The system instruction string.
     """
+    logger.debug(
+        f"Generating system instruction for student: {viva_request.student_name}, topic: {viva_request.topic}"
+    )
+
     system_instruction = f"""
 You are an expert oral examiner conducting a viva (oral examination) for a student.
 
@@ -86,6 +95,7 @@ You are an expert oral examiner conducting a viva (oral examination) for a stude
 - Be supportive but accurate in your evaluations.
 - Do NOT ask multiple questions at once. Keep your responses concise.
 """
+    logger.debug("System instruction generated successfully.")
     return system_instruction.strip()
 
 
@@ -100,65 +110,81 @@ async def create_ephemeral_token(viva_request: VivaStartRequest) -> dict:
     Returns:
         dict: Dictionary containing the token and configuration details.
     """
-    # Initialize the Google GenAI client with your API key
-    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+    logger.info(
+        f"Starting ephemeral token creation for viva session. Student: {viva_request.student_name}"
+    )
 
-    # Generate the system instruction
-    system_instruction = generate_system_instruction(viva_request)
+    try:
+        # Initialize the Google GenAI client with your API key
+        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        logger.debug("Google GenAI client initialized.")
 
-    # Combine all tool declarations into a single list
-    tool_declarations = [
-        conclude_viva_tool,
-    ]
+        # Generate the system instruction
+        system_instruction = generate_system_instruction(viva_request)
 
-    # Build the config for the Live API
-    live_config = {
-        "session_resumption": {},  # Enable session resumption
-        "response_modalities": ["AUDIO"],  # AI responds with audio
-        "system_instruction": system_instruction,
-        "tools": [{"function_declarations": tool_declarations}],
-        "input_audio_transcription": {},  # Enable input transcription
-        "output_audio_transcription": {},  # Enable output transcription
-    }
+        # Combine all tool declarations into a single list
+        tool_declarations = [
+            conclude_viva_tool,
+        ]
 
-    # Add voice configuration if specified
-    if viva_request.voice_name:
-        live_config["speech_config"] = {
-            "voice_config": {
-                "prebuilt_voice_config": {"voice_name": viva_request.voice_name}
+        # Build the config for the Live API
+        live_config = {
+            "session_resumption": {},  # Enable session resumption
+            "response_modalities": ["AUDIO"],  # AI responds with audio
+            "system_instruction": system_instruction,
+            "tools": [{"function_declarations": tool_declarations}],
+            "input_audio_transcription": {},  # Enable input transcription
+            "output_audio_transcription": {},  # Enable output transcription
+        }
+
+        # Add voice configuration if specified
+        if viva_request.voice_name:
+            logger.debug(f"Configuring voice: {viva_request.voice_name}")
+            live_config["speech_config"] = {
+                "voice_config": {
+                    "prebuilt_voice_config": {"voice_name": viva_request.voice_name}
+                }
             }
+
+        # Add thinking configuration if enabled
+        if viva_request.enable_thinking and viva_request.thinking_budget > 0:
+            logger.debug(f"Configuring thinking budget: {viva_request.thinking_budget}")
+            live_config["thinking_config"] = {
+                "thinking_budget": viva_request.thinking_budget,
+                "include_thoughts": False,  # Do not include thought summaries in responses
+            }
+
+        # Configure the ephemeral token with Live API constraints
+        # Session limited to 5 minutes
+        token_config = {
+            "uses": 1,  # Token can only be used once
+            "expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
+            + datetime.timedelta(minutes=5),  # 5-minute session limit
+            "new_session_expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
+            + datetime.timedelta(minutes=2),  # 2 minutes to start session
+            "live_connect_constraints": {
+                "model": MODEL_NAME,
+                "config": live_config,
+            },
+            # http_options for v1alpha must be inside config
+            "http_options": {"api_version": "v1alpha"},
         }
 
-    # Add thinking configuration if enabled
-    if viva_request.enable_thinking and viva_request.thinking_budget > 0:
-        live_config["thinking_config"] = {
-            "thinking_budget": viva_request.thinking_budget,
-            "include_thoughts": False,  # Do not include thought summaries in responses
+        logger.debug("Requesting ephemeral token from Google API...")
+
+        # Create the token using the v1alpha API
+        # Use client.aio.auth_tokens.create for async call
+        token = await client.aio.auth_tokens.create(config=token_config)
+
+        logger.info(f"Ephemeral token created successfully. Token name: {token.name}")
+
+        # FIX: The token string is in the 'name' attribute, NOT 'token'
+        return {
+            "token": token.name,
+            "voice_name": viva_request.voice_name or "Kore",
+            "session_duration_minutes": 5,
         }
 
-    # Configure the ephemeral token with Live API constraints
-    # Session limited to 5 minutes
-    token_config = {
-        "uses": 1,  # Token can only be used once
-        "expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
-        + datetime.timedelta(minutes=5),  # 5-minute session limit
-        "new_session_expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
-        + datetime.timedelta(minutes=2),  # 2 minutes to start session
-        "live_connect_constraints": {
-            "model": MODEL_NAME,
-            "config": live_config,
-        },
-        # http_options for v1alpha must be inside config
-        "http_options": {"api_version": "v1alpha"},
-    }
-
-    # Create the token using the v1alpha API
-    # Use client.aio.auth_tokens.create for async call
-    token = await client.aio.auth_tokens.create(config=token_config)
-
-    # FIX: The token string is in the 'name' attribute, NOT 'token'
-    return {
-        "token": token.name,
-        "voice_name": viva_request.voice_name or "Kore",
-        "session_duration_minutes": 5,
-    }
+    except Exception as e:
+        logger.error(f"Failed to create ephemeral token: {str(e)}", exc_info=True)
+        raise
