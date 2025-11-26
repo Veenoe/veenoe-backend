@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.db.database import init_db
 from app.api.api import api_router
+from app.core.config import settings
 
 
 @asynccontextmanager
@@ -17,7 +18,7 @@ async def lifespan(app: FastAPI):
     Asynchronous context manager for the application's lifespan.
     This function is executed when the application starts up and shuts down.
     It's used to initialize resources like the database connection.
-    
+
     Args:
         app (FastAPI): The FastAPI application instance.
     """
@@ -35,15 +36,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Define allowed origins for CORS
+origins = [
+    "http://localhost:3000",  # React default
+    "http://localhost:5173",  # Vite default
+    "http://localhost:8080",  # Alternative frontend port
+    "https://www.veenoe.com",  # Production Frontend
+    "https://veenoe.com",  # Production Frontend (non-www)
+]
+
+# Add production frontend URL if configured
+if settings.FRONTEND_URL:
+    origins.append(settings.FRONTEND_URL)
+
 # Add CORS middleware to allow frontend communication
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # React default
-        "http://localhost:5173",  # Vite default
-        "http://localhost:8080",  # Alternative frontend port
-        # Add your production frontend URL here
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

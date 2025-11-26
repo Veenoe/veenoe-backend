@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # The name of the MongoDB database to use
     MONGO_DB_NAME: str
 
+    # Production Frontend URL (optional, for CORS)
+    FRONTEND_URL: str | None = None
+
     # Configure the settings to load from a .env file
     model_config = SettingsConfigDict(env_file=".env")
 
