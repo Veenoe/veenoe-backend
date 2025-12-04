@@ -13,12 +13,17 @@ from app.schemas.viva import (
     EvaluateResponseResponse,
     ConcludeVivaRequest,
     ConcludeVivaResponse,
+    HistoryResponse,
+    RenameSessionRequest,
 )
 from app.services.viva_service import (
     start_new_viva_session,
     get_next_question,
     evaluate_and_save_response,
     conclude_viva_session,
+    get_user_history,
+    rename_session,
+    delete_session,
 )
 
 # Create a router for these specific endpoints
@@ -131,3 +136,41 @@ async def conclude_viva(request: ConcludeVivaRequest):
         return ConcludeVivaResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error concluding viva: {str(e)}")
+
+
+@router.get("/history/{user_id}", response_model=HistoryResponse)
+async def get_history(user_id: str):
+    """
+    Gets the history of sessions for a user.
+    """
+    try:
+        sessions = await get_user_history(user_id)
+        return HistoryResponse(sessions=sessions)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching history: {str(e)}")
+
+
+@router.patch("/{session_id}/rename")
+async def rename_session_endpoint(session_id: str, request: RenameSessionRequest):
+    """
+    Renames a session.
+    """
+    try:
+        return await rename_session(session_id, request.new_title)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error renaming session: {str(e)}")
+
+
+@router.delete("/{session_id}")
+async def delete_session_endpoint(session_id: str):
+    """
+    Deletes a session.
+    """
+    try:
+        return await delete_session(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting session: {str(e)}")

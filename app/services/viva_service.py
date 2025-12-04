@@ -34,6 +34,9 @@ async def start_new_viva_session(viva_request: VivaStartRequest) -> dict:
     # 1. Create a new VivaSession in the database
     new_session = VivaSession(
         student_name=viva_request.student_name,
+        user_id=viva_request.user_id,
+        title=viva_request.topic,  # Default title is the topic
+        session_type=viva_request.session_type or "viva",
         topic=viva_request.topic,
         class_level=viva_request.class_level,
         started_at=datetime.datetime.now(tz=datetime.timezone.utc),
@@ -197,3 +200,76 @@ async def conclude_viva_session(viva_session_id: str, final_feedback: str) -> di
         "correct_answers": correct_answers,
         "final_feedback": final_feedback,
     }
+
+
+async def get_user_history(user_id: str) -> list[dict]:
+    """
+    Fetches the history of sessions for a given user.
+
+    Args:
+        user_id: The Clerk User ID
+
+    Returns:
+        list[dict]: List of session summaries
+    """
+    sessions = (
+        await VivaSession.find(VivaSession.user_id == user_id)
+        .sort(-VivaSession.started_at)
+        .to_list()
+    )
+
+    history = []
+    for session in sessions:
+        history.append(
+            {
+                "viva_session_id": str(session.id),
+                "title": session.title,
+                "topic": session.topic,
+                "class_level": session.class_level,
+                "started_at": session.started_at,
+                "session_type": session.session_type,
+                "status": session.status,
+            }
+        )
+
+    return history
+
+
+async def rename_session(session_id: str, new_title: str) -> dict:
+    """
+    Renames a session.
+
+    Args:
+        session_id: The session ID
+        new_title: The new title
+
+    Returns:
+        dict: Success message
+    """
+    session = await VivaSession.get(ObjectId(session_id))
+    if not session:
+        raise ValueError(f"Viva session {session_id} not found")
+
+    session.title = new_title
+    await session.save()
+
+    return {"status": "success", "message": "Session renamed successfully"}
+
+
+async def delete_session(session_id: str) -> dict:
+    """
+    Deletes a session.
+
+    Args:
+        session_id: The session ID
+
+    Returns:
+        dict: Success message
+    """
+    session = await VivaSession.get(ObjectId(session_id))
+    if not session:
+        raise ValueError(f"Viva session {session_id} not found")
+
+    await session.delete()
+
+    return {"status": "success", "message": "Session deleted successfully"}

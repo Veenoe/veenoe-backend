@@ -16,9 +16,13 @@ class VivaStartRequest(BaseModel):
     """
 
     student_name: str = Field(..., example="John Doe")
+    user_id: str = Field(..., description="The Clerk User ID")
     topic: str = Field(..., example="Python Programming")
     class_level: int = Field(
         ..., example=12, description="The student's grade or class level"
+    )
+    session_type: Optional[str] = Field(
+        default="viva", description="Type of session: 'viva' or 'learn'"
     )
     voice_name: Optional[str] = Field(
         default="Kore",
@@ -126,3 +130,36 @@ class ConcludeVivaResponse(BaseModel):
     total_questions: int
     correct_answers: int
     final_feedback: str
+
+
+# == History Schemas ==
+
+
+class VivaSessionSummary(BaseModel):
+    """
+    Schema for a summary of a viva session (for list view).
+    """
+
+    viva_session_id: str
+    title: str
+    topic: str
+    class_level: int
+    started_at: datetime.datetime
+    session_type: str
+    status: str
+
+
+class HistoryResponse(BaseModel):
+    """
+    Schema for the history response.
+    """
+
+    sessions: list[VivaSessionSummary]
+
+
+class RenameSessionRequest(BaseModel):
+    """
+    Schema for renaming a session.
+    """
+
+    new_title: str
