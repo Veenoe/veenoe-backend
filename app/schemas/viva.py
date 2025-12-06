@@ -6,6 +6,7 @@ They ensure data validation, serialization, and generate OpenAPI documentation.
 
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
+import datetime
 
 # == Viva Start Schemas ==
 
