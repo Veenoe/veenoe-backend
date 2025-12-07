@@ -1,76 +1,137 @@
 """
-This module handles all interactions with the Google Gemini API.
-It is responsible for:
-- Defining the tools (function declarations) the AI can use.
-- Generating the system instruction (prompt) for the AI.
-- Creating secure, short-lived ephemeral tokens for the client.
+Service module responsible for managing all interactions with the Google Gemini API.
+
+This includes:
+- Defining the tool declarations exposed to the AI model.
+- Generating dynamic system instructions for viva sessions.
+- Creating short-lived ephemeral tokens for secure real-time communication.
+
+This module follows FastAPI service-layer best practices and acts as the
+Gemini-specific implementation of the LLMClient interface.
 """
 
 import logging
-import google.genai as genai
 import datetime
+import google.genai as genai
 from app.core.config import settings
 from app.schemas.viva import VivaStartRequest
+from app.interfaces.llm_client import LLMClient
 
-# Configure logging
+# Configure module-level logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-# The specific model to be used for the viva
-MODEL_NAME = "gemini-2.5-flash-native-audio-preview-09-2025"
 
-# --- Define the Tools the AI can use ---
+class GeminiService:
+    """
+    Service class implementing the LLMClient protocol using Google Gemini.
 
-conclude_viva_tool = {
-    "name": "conclude_viva",
-    "description": "Call this tool to END the viva session. You MUST provide a score, summary, strengths, and areas for improvement.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "viva_session_id": {
-                "type": "STRING",
-                "description": "The ID of the current viva session.",
+    This class encapsulates:
+    - System prompt generation for viva sessions.
+    - Declarative tool definitions used by the model.
+    - Creation of ephemeral tokens enabling clients to connect via Gemini Live API.
+
+    The class is stateless except for the API key reference, making it
+    safe for concurrent instantiation and aligned with dependency-injection
+    patterns commonly used in FastAPI applications.
+    """
+
+    # The Gemini model used for Viva interactions.
+    MODEL_NAME = "gemini-2.5-flash-native-audio-preview-09-2025"
+
+    # ----------------------------------------------------------------------
+    # Tool Declaration: conclude_viva
+    # ----------------------------------------------------------------------
+    # This tool is exposed to the AI and must be called at the end of
+    # the viva session with detailed evaluation metadata.
+    _CONCLUDE_VIVA_TOOL = {
+        "name": "conclude_viva",
+        "description": (
+            "Call this tool to END the viva session. You MUST provide a score, "
+            "summary, strengths, and areas for improvement."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "viva_session_id": {
+                    "type": "STRING",
+                    "description": "The ID of the current viva session.",
+                },
+                "score": {
+                    "type": "INTEGER",
+                    "description": (
+                        "Final score out of 10 based on technical accuracy "
+                        "and communication."
+                    ),
+                },
+                "summary": {
+                    "type": "STRING",
+                    "description": "A polite closing statement and final performance summary.",
+                },
+                "strong_points": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": (
+                        "List of 2–3 specific concepts the student demonstrated strong understanding of."
+                    ),
+                },
+                "areas_of_improvement": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": (
+                        "List of 2–3 specific topics the student needs to improve."
+                    ),
+                },
             },
-            "score": {
-                "type": "INTEGER",
-                "description": "A final score out of 10 based on technical accuracy and communication.",
-            },
-            "summary": {
-                "type": "STRING",
-                "description": "A polite closing statement and brief summary of performance.",
-            },
-            "strong_points": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"},
-                "description": "List of 2-3 specific topics or concepts the student understood well.",
-            },
-            "areas_of_improvement": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"},
-                "description": "List of 2-3 specific topics or concepts the student needs to study further.",
-            },
+            "required": [
+                "viva_session_id",
+                "score",
+                "summary",
+                "strong_points",
+                "areas_of_improvement",
+            ],
         },
-        "required": [
-            "viva_session_id",
-            "score",
-            "summary",
-            "strong_points",
-            "areas_of_improvement",
-        ],
-    },
-}
+    }
 
+    # ------------------------------------------------------------------
+    # Initialization
+    # ------------------------------------------------------------------
+    def __init__(self) -> None:
+        """
+        Initialize the GeminiService.
 
-def generate_system_instruction(viva_request: VivaStartRequest) -> str:
-    """
-    Generates the system instruction (prompt) for the AI model based on
-    the viva's configuration.
-    """
-    logger.debug(
-        f"Generating system instruction for student: {viva_request.student_name}, topic: {viva_request.topic}"
-    )
+        Loads the Google API key from application settings and prepares
+        the service instance for model interactions.
+        """
+        self._api_key = settings.GOOGLE_API_KEY
+        logger.debug("GeminiService initialized with configured API key.")
 
-    system_instruction = f"""
+    # ------------------------------------------------------------------
+    # System Instruction Builder
+    # ------------------------------------------------------------------
+    def generate_system_instruction(self, viva_request: VivaStartRequest) -> str:
+        """
+        Generate and return the system instruction (prompt) that guides
+        the AI's behavior during the viva session.
+
+        Parameters
+        ----------
+        viva_request : VivaStartRequest
+            Object containing student name, topic, class level, and optional voice preference.
+
+        Returns
+        -------
+        str
+            A fully structured prompt for the Gemini model defining
+            viva protocol, evaluation rules, and concluding behavior.
+        """
+        logger.debug(
+            f"Generating system instruction for viva session → "
+            f"Student: {viva_request.student_name}, Topic: {viva_request.topic}"
+        )
+
+        # Construct structured system instructions fed directly to Gemini.
+        system_instruction = f"""
 You are an expert oral examiner conducting a Viva (oral exam) for a student.
 
 **Student Name:** {viva_request.student_name}
@@ -99,61 +160,99 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
 -   When using `conclude_viva`, ensure the `strong_points` and `areas_of_improvement` are specific to the topics discussed, not generic advice.
 -   **CRITICAL:** You MUST speak your concluding remarks BEFORE calling the `conclude_viva` tool. Do not call the tool silently.
 """
-    return system_instruction.strip()
+        return system_instruction.strip()
 
+    # ------------------------------------------------------------------
+    # Ephemeral Token Creation
+    # ------------------------------------------------------------------
+    async def create_ephemeral_token(self, viva_request: VivaStartRequest) -> dict:
+        """
+        Create a secure, short-lived ephemeral token allowing the
+        client to connect to the Google Gemini Live API.
 
-async def create_ephemeral_token(viva_request: VivaStartRequest) -> dict:
-    """
-    Creates a secure, short-lived ephemeral token that the client will use
-    to connect to the Google Live API.
-    """
-    logger.info(
-        f"Starting ephemeral token creation for viva session. Student: {viva_request.student_name}"
-    )
+        This token:
+        - Is valid for exactly one usage.
+        - Expires in 15 minutes.
+        - Includes the system instruction and tool declarations.
+        - Configures audio input/output and optional voice settings.
 
-    try:
-        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        Parameters
+        ----------
+        viva_request : VivaStartRequest
+            Contains viva metadata required to personalize the system prompt.
 
-        system_instruction = generate_system_instruction(viva_request)
+        Returns
+        -------
+        dict
+            A structured response containing:
+            - token: str (ephemeral token ID)
+            - voice_name: str (selected or default voice)
+            - session_duration_minutes: int
+            - model_name: str (Gemini model used)
 
-        # We only need the conclude tool now, as we aren't saving turns individually
-        tool_declarations = [conclude_viva_tool]
+        Raises
+        ------
+        Exception
+            If token creation fails, the exception is logged and re-raised.
+        """
+        logger.info(
+            f"Starting ephemeral token creation for viva session. "
+            f"Student: {viva_request.student_name}"
+        )
 
-        live_config = {
-            "session_resumption": {},
-            "response_modalities": ["AUDIO"],
-            "system_instruction": system_instruction,
-            "tools": [{"function_declarations": tool_declarations}],
-            "input_audio_transcription": {},
-            "output_audio_transcription": {},
-        }
+        try:
+            # A new client is created per request to maintain async safety.
+            client = genai.Client(api_key=self._api_key)
 
-        if viva_request.voice_name:
-            live_config["speech_config"] = {
-                "voice_config": {
-                    "prebuilt_voice_config": {"voice_name": viva_request.voice_name}
-                }
+            # Build system instructions and tool declarations.
+            system_instruction = self.generate_system_instruction(viva_request)
+            tool_declarations = [self._CONCLUDE_VIVA_TOOL]
+
+            # Base configuration passed to the Gemini Live API.
+            live_config = {
+                "session_resumption": {},
+                "response_modalities": ["AUDIO"],
+                "system_instruction": system_instruction,
+                "tools": [{"function_declarations": tool_declarations}],
+                "input_audio_transcription": {},
+                "output_audio_transcription": {},
             }
 
-        token_config = {
-            "uses": 1,
-            "expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
-            + datetime.timedelta(minutes=15),
-            "live_connect_constraints": {
-                "model": MODEL_NAME,
-                "config": live_config,
-            },
-            "http_options": {"api_version": "v1alpha"},
-        }
+            # Optionally configure a specific voice.
+            if viva_request.voice_name:
+                live_config["speech_config"] = {
+                    "voice_config": {
+                        "prebuilt_voice_config": {"voice_name": viva_request.voice_name}
+                    }
+                }
 
-        token = await client.aio.auth_tokens.create(config=token_config)
+            # Token configuration: one-time use, expires in 15 minutes.
+            token_config = {
+                "uses": 1,
+                "expire_time": (
+                    datetime.datetime.now(tz=datetime.timezone.utc)
+                    + datetime.timedelta(minutes=15)
+                ),
+                "live_connect_constraints": {
+                    "model": self.MODEL_NAME,
+                    "config": live_config,
+                },
+                "http_options": {"api_version": "v1alpha"},
+            }
 
-        return {
-            "token": token.name,
-            "voice_name": viva_request.voice_name or "Kore",
-            "session_duration_minutes": 5,
-        }
+            # Create ephemeral token asynchronously.
+            token = await client.aio.auth_tokens.create(config=token_config)
 
-    except Exception as e:
-        logger.error(f"Failed to create ephemeral token: {str(e)}", exc_info=True)
-        raise
+            return {
+                "token": token.name,
+                "voice_name": viva_request.voice_name or "Kore",
+                "session_duration_minutes": 5,
+                "model_name": self.MODEL_NAME,
+            }
+
+        except Exception as e:
+            logger.error(
+                f"Failed to create ephemeral token: {str(e)}",
+                exc_info=True,
+            )
+            raise
