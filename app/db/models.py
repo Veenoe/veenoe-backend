@@ -1,10 +1,9 @@
 """
 This module defines the database models (collections) using Beanie and Pydantic.
-These models represent the structure of the data stored in MongoDB.
 
-- VivaTurn: A Pydantic model for a sub-document within VivaSession.
-- VivaSession: A Beanie Document for a top-level viva session.
-- QuestionBank: A Beanie Document for the collection of questions.
+These models represent the structure and schema of the data stored in MongoDB.
+They serve as the single source of truth for how viva sessions and their
+associated feedback are stored, validated, and retrieved from the database.
 """
 
 from beanie import Document, Indexed
@@ -13,67 +12,99 @@ from typing import List, Optional
 import datetime
 
 
-class VivaTurn(BaseModel):
+class VivaFeedback(BaseModel):
     """
-    A Pydantic model representing a single Question/Answer turn.
-    This is intended to be used as an embedded document (a list) within
-    the VivaSession document.
+    Structured feedback generated at the end of a viva session.
+
+    This model encapsulates the evaluation results including the student's performance
+    score, an overall summary, strengths, and improvement areas. It is embedded into
+    the VivaSession document rather than stored as a separate collection.
+
+    Attributes:
+        score (int): Numeric score between 0 and 10 assessing performance.
+        summary (str): High-level summary of the student's overall viva outcome.
+        strong_points (List[str]): A list highlighting concepts the student excelled in.
+        areas_of_improvement (List[str]): A list identifying concepts where improvement is needed.
     """
-    turn_id: int  # Sequential ID for the turn (1, 2, 3...)
-    question_text: str  # The text of the question that was asked
-    difficulty: int  # The difficulty of the question that was asked (1-5)
-    question_id: Optional[str] = None  # ID of the question from QuestionBank
-    student_answer_transcription: Optional[str] = (
-        None  # The student's transcribed answer
+    score: int = Field(
+        ...,
+        ge=0,
+        le=10,
+        description="Score out of 10 representing the student's overall performance"
     )
-    ai_evaluation: Optional[str] = None  # The AI's evaluation/feedback
-    is_correct: Optional[bool] = None  # Whether the answer was correct
-    timestamp: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(tz=datetime.timezone.utc)
+
+    summary: str = Field(
+        ...,
+        description="Overall summary of the student's performance during the viva"
+    )
+
+    strong_points: List[str] = Field(
+        default_factory=list,
+        description="List of strong concepts demonstrated by the student"
+    )
+
+    areas_of_improvement: List[str] = Field(
+        default_factory=list,
+        description="List of concepts where the student needs improvement"
     )
 
 
 class VivaSession(Document):
     """
     A Beanie Document representing a complete viva session.
-    This is a top-level collection in MongoDB.
+
+    This model captures all metadata and outcomes associated with a viva session,
+    including session details, timestamps, status, and optional structured feedback.
+    It is stored as a top-level collection in MongoDB.
+
+    Attributes:
+        student_name (str): Name of the student participating in the viva.
+        user_id (str): Clerk user ID of the educator; indexed for faster lookups.
+        title (str): Title of the session (e.g., "Python Basics Viva").
+        session_type (str): Either "viva" or "learn"; defaults to "viva".
+        topic (str): Subject/topic of the session; indexed for improved query performance.
+        class_level (int): Class or grade level of the student; indexed.
+        started_at (datetime): UTC timestamp when the session began.
+        ended_at (Optional[datetime]): UTC timestamp when the session ended.
+        status (str): Current session state — "in_progress", "completed", or "abandoned".
+        feedback (Optional[VivaFeedback]): Final structured evaluation once session is completed.
     """
+
+    # Core session metadata
     student_name: str
-    topic: Indexed(str)  # Indexed for faster queries
-    class_level: Indexed(int)  # Indexed for faster queries
+    user_id: Indexed(str)  # Clerk user ID, indexed for efficient user-specific queries
+    title: str  # Example: "Python Basics Viva"
+
+    # Classification info
+    session_type: str = "viva"  # Determines workflow; may be "viva" or "learn"
+    topic: Indexed(str)  # Indexed for quicker topic-based retrievals
+    class_level: Indexed(int)  # Indexed for level-based filtering
+
+    # Timestamp tracking
     started_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(tz=datetime.timezone.utc)
+        default_factory=lambda: datetime.datetime.now(tz=datetime.timezone.utc),
+        description="Timestamp (UTC) when the viva session was started"
     )
-    ended_at: Optional[datetime.datetime] = None
-    status: str = "in_progress"  # "in_progress", "completed", "abandoned"
-    turns: List[VivaTurn] = []  # List of question-answer turns
-    final_feedback: Optional[str] = None  # Overall feedback at the end
+
+    ended_at: Optional[datetime.datetime] = Field(
+        default=None,
+        description="Timestamp (UTC) when the session ended, if applicable"
+    )
+
+    # Current session state
+    status: str = Field(
+        default="in_progress",
+        description="Session status: 'in_progress', 'completed', or 'abandoned'"
+    )
+
+    # Final structured result from the viva evaluation
+    feedback: Optional[VivaFeedback] = None
 
     class Settings:
+        """
+        Beanie internal model settings.
+
+        Defines the MongoDB collection name where VivaSession documents
+        are stored. This ensures consistency across environments and deployments.
+        """
         name = "viva_sessions"  # Collection name in MongoDB
-
-
-class QuestionBank(Document):
-    """
-    A Beanie Document representing the bank of questions.
-    This is a separate collection in MongoDB that stores all available questions.
-    """
-    topic: Indexed(str)  # e.g., "Python Programming"
-    class_level: Indexed(int)  # e.g., 10, 11, 12
-    difficulty: Indexed(int)  # 1 (easy) to 5 (hard)
-    question_text: str
-    expected_answer_keywords: Optional[List[str]] = (
-        None  # Optional keywords for evaluation
-    )
-    created_at: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(tz=datetime.timezone.utc)
-    )
-
-    class Settings:
-        name = "question_bank"  # Collection name in MongoDB
-        indexes = [
-            "topic",
-            "class_level",
-            "difficulty",
-            [("topic", 1), ("class_level", 1), ("difficulty", 1)],  # Compound index
-        ]
