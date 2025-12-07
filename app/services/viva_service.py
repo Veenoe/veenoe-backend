@@ -1,54 +1,31 @@
 """
 This module contains the core business logic for the Viva application.
-It orchestrates the process of a viva session, from starting it,
-to handling function calls from the frontend, interfacing with the database,
-and concluding the session.
 """
 
-from app.db.models import VivaSession, VivaTurn, QuestionBank
+from app.db.models import VivaSession, VivaFeedback
 from app.schemas.viva import VivaStartRequest
 from app.services.gemini_service import create_ephemeral_token, MODEL_NAME
 import datetime
 from bson import ObjectId
-from beanie.operators import NotIn
-from typing import Optional
-
+from typing import List, Optional
 
 # --- Main Service Functions ---
 
-
 async def start_new_viva_session(viva_request: VivaStartRequest) -> dict:
-    """
-    Orchestrates the start of a new viva session.
-
-    1. Creates a new VivaSession document in the database.
-    2. Calls the Gemini service to generate a secure ephemeral token.
-    3. Returns the session ID, token, and model name to the client.
-
-    Args:
-        viva_request (VivaStartRequest): The request details from the client.
-
-    Returns:
-        dict: A dictionary containing session ID, token, and model name.
-    """
-    # 1. Create a new VivaSession in the database
     new_session = VivaSession(
         student_name=viva_request.student_name,
         user_id=viva_request.user_id,
-        title=viva_request.topic,  # Default title is the topic
+        title=viva_request.topic,
         session_type=viva_request.session_type or "viva",
         topic=viva_request.topic,
         class_level=viva_request.class_level,
         started_at=datetime.datetime.now(tz=datetime.timezone.utc),
-        turns=[],  # Initially empty, will be populated as questions are asked
         status="in_progress",
     )
     await new_session.insert()
 
-    # 2. Generate an ephemeral token for this viva session
     token_data = await create_ephemeral_token(viva_request)
 
-    # 3. Return the session details and token to the client
     return {
         "viva_session_id": str(new_session.id),
         "ephemeral_token": token_data["token"],
@@ -57,161 +34,58 @@ async def start_new_viva_session(viva_request: VivaStartRequest) -> dict:
         "voice_name": token_data["voice_name"],
     }
 
-
-async def get_next_question(
-    viva_session_id: str, topic: str, class_level: int, difficulty: int
+async def conclude_viva_session(
+    viva_session_id: str, 
+    score: int, 
+    summary: str, 
+    strong_points: List[str], 
+    areas_of_improvement: List[str]
 ) -> dict:
-    """
-    Fetches the next question from the database.
-    This is called by the frontend when the AI requests a question.
-
-    Args:
-        viva_session_id: The viva session ID
-        topic: The subject topic
-        class_level: Student's grade level
-        difficulty: Desired difficulty (1-5)
-
-    Returns:
-        dict: Question text, difficulty, and question_id
-    """
-    # Verify session exists
     session = await VivaSession.get(ObjectId(viva_session_id))
     if not session:
         raise ValueError(f"Viva session {viva_session_id} not found")
 
-    # Get already asked question IDs to avoid repetition
-    asked_question_ids = []
-    for turn in session.turns:
-        if hasattr(turn, "question_id") and turn.question_id:
-            asked_question_ids.append(ObjectId(turn.question_id))
-
-    # Query the database for a question
-    question = await QuestionBank.find_one(
-        QuestionBank.topic == topic,
-        QuestionBank.class_level == class_level,
-        QuestionBank.difficulty == difficulty,
-        NotIn(QuestionBank.id, asked_question_ids),
+    feedback_data = VivaFeedback(
+        score=score,
+        summary=summary,
+        strong_points=strong_points,
+        areas_of_improvement=areas_of_improvement
     )
 
-    if not question:
-        # Fallback: try any difficulty if no questions at target difficulty
-        question = await QuestionBank.find_one(
-            QuestionBank.topic == topic,
-            QuestionBank.class_level == class_level,
-            NotIn(QuestionBank.id, asked_question_ids),
-        )
-
-    if not question:
-        raise ValueError(
-            f"No questions found for topic='{topic}', class_level={class_level}"
-        )
-
-    return {
-        "question_text": question.question_text,
-        "difficulty": question.difficulty,
-        "question_id": str(question.id),
-    }
-
-
-async def evaluate_and_save_response(
-    viva_session_id: str,
-    question_text: str,
-    difficulty: int,
-    student_answer: str,
-    evaluation: str,
-    is_correct: bool,
-    question_id: Optional[str] = None,
-) -> dict:
-    """
-    Saves the student's answer and AI's evaluation to the database.
-    This is called by the frontend when the AI evaluates an answer.
-
-    Args:
-        viva_session_id: The viva session ID
-        question_text: The question that was asked
-        difficulty: Question difficulty
-        student_answer: Student's transcribed answer
-        evaluation: AI's evaluation
-        is_correct: Whether answer was correct
-
-    Returns:
-        dict: Confirmation with turn_id
-    """
-    # Fetch the session
-    session = await VivaSession.get(ObjectId(viva_session_id))
-    if not session:
-        raise ValueError(f"Viva session {viva_session_id} not found")
-
-    # Create a new turn
-    turn_id = len(session.turns) + 1
-    new_turn = VivaTurn(
-        turn_id=turn_id,
-        question_text=question_text,
-        difficulty=difficulty,
-        question_id=question_id,
-        student_answer_transcription=student_answer,
-        ai_evaluation=evaluation,
-        is_correct=is_correct,
-        timestamp=datetime.datetime.now(tz=datetime.timezone.utc),
-    )
-
-    # Add the turn to the session
-    session.turns.append(new_turn)
-    await session.save()
-
-    return {
-        "status": "success",
-        "message": "Response evaluated and saved",
-        "turn_id": turn_id,
-    }
-
-
-async def conclude_viva_session(viva_session_id: str, final_feedback: str) -> dict:
-    """
-    Concludes the viva session and generates final statistics.
-    This is called by the frontend when the AI concludes the viva.
-
-    Args:
-        viva_session_id: The viva session ID
-        final_feedback: AI's final feedback
-
-    Returns:
-        dict: Final statistics and confirmation
-    """
-    # Fetch the session
-    session = await VivaSession.get(ObjectId(viva_session_id))
-    if not session:
-        raise ValueError(f"Viva session {viva_session_id} not found")
-
-    # Calculate statistics
-    total_questions = len(session.turns)
-    correct_answers = sum(1 for turn in session.turns if turn.is_correct)
-
-    # Update session status
+    session.feedback = feedback_data
     session.status = "completed"
     session.ended_at = datetime.datetime.now(tz=datetime.timezone.utc)
-    session.final_feedback = final_feedback
+    
     await session.save()
 
     return {
         "status": "completed",
-        "message": "Viva session concluded successfully",
-        "total_questions": total_questions,
-        "correct_answers": correct_answers,
-        "final_feedback": final_feedback,
+        "score": score,
+        "final_feedback": summary,
     }
 
+# --- NEW FUNCTION HERE ---
+async def get_viva_session_details(session_id: str) -> dict:
+    """
+    Fetches full details of a specific viva session.
+    """
+    session = await VivaSession.get(ObjectId(session_id))
+    if not session:
+        raise ValueError(f"Viva session {session_id} not found")
+        
+    return {
+        "viva_session_id": str(session.id),
+        "student_name": session.student_name,
+        "title": session.title,
+        "topic": session.topic,
+        "class_level": session.class_level,
+        "started_at": session.started_at,
+        "ended_at": session.ended_at,
+        "status": session.status,
+        "feedback": session.feedback # Pydantic will serialize this automatically
+    }
 
 async def get_user_history(user_id: str) -> list[dict]:
-    """
-    Fetches the history of sessions for a given user.
-
-    Args:
-        user_id: The Clerk User ID
-
-    Returns:
-        list[dict]: List of session summaries
-    """
     sessions = (
         await VivaSession.find(VivaSession.user_id == user_id)
         .sort(-VivaSession.started_at)
@@ -234,42 +108,19 @@ async def get_user_history(user_id: str) -> list[dict]:
 
     return history
 
-
 async def rename_session(session_id: str, new_title: str) -> dict:
-    """
-    Renames a session.
-
-    Args:
-        session_id: The session ID
-        new_title: The new title
-
-    Returns:
-        dict: Success message
-    """
     session = await VivaSession.get(ObjectId(session_id))
     if not session:
         raise ValueError(f"Viva session {session_id} not found")
 
     session.title = new_title
     await session.save()
-
     return {"status": "success", "message": "Session renamed successfully"}
 
-
 async def delete_session(session_id: str) -> dict:
-    """
-    Deletes a session.
-
-    Args:
-        session_id: The session ID
-
-    Returns:
-        dict: Success message
-    """
     session = await VivaSession.get(ObjectId(session_id))
     if not session:
         raise ValueError(f"Viva session {session_id} not found")
 
     await session.delete()
-
     return {"status": "success", "message": "Session deleted successfully"}

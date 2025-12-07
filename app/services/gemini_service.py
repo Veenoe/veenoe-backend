@@ -8,7 +8,6 @@ It is responsible for:
 
 import logging
 import google.genai as genai
-from google.genai import types
 import datetime
 from app.core.config import settings
 from app.schemas.viva import VivaStartRequest
@@ -21,28 +20,43 @@ logger.setLevel(logging.DEBUG)
 MODEL_NAME = "gemini-2.5-flash-native-audio-preview-09-2025"
 
 # --- Define the Tools the AI can use ---
-# Only conclude_viva is needed now.
 
 conclude_viva_tool = {
     "name": "conclude_viva",
-    "description": "Concludes the viva session and generates a final summary.",
+    "description": "Call this tool to END the viva session. You MUST provide a score, summary, strengths, and areas for improvement.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "viva_session_id": {
                 "type": "STRING",
-                "description": "The ID of the viva session to conclude.",
-            },
-            "final_feedback": {
-                "type": "STRING",
-                "description": "Your final feedback and summary for the student.",
+                "description": "The ID of the current viva session.",
             },
             "score": {
                 "type": "INTEGER",
-                "description": "Final score out of 10.",
+                "description": "A final score out of 10 based on technical accuracy and communication.",
+            },
+            "summary": {
+                "type": "STRING",
+                "description": "A polite closing statement and brief summary of performance.",
+            },
+            "strong_points": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+                "description": "List of 2-3 specific topics or concepts the student understood well.",
+            },
+            "areas_of_improvement": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+                "description": "List of 2-3 specific topics or concepts the student needs to study further.",
             },
         },
-        "required": ["viva_session_id", "final_feedback", "score"],
+        "required": [
+            "viva_session_id",
+            "score",
+            "summary",
+            "strong_points",
+            "areas_of_improvement",
+        ],
     },
 }
 
@@ -51,51 +65,40 @@ def generate_system_instruction(viva_request: VivaStartRequest) -> str:
     """
     Generates the system instruction (prompt) for the AI model based on
     the viva's configuration.
-
-    Args:
-        viva_request (VivaStartRequest): The details of the viva being started.
-
-    Returns:
-        str: The system instruction string.
     """
     logger.debug(
         f"Generating system instruction for student: {viva_request.student_name}, topic: {viva_request.topic}"
     )
 
     system_instruction = f"""
-You are an expert oral examiner conducting a viva (oral examination) for a student.
+You are an expert oral examiner conducting a Viva (oral exam) for a student.
 
 **Student Name:** {viva_request.student_name}
 **Topic:** {viva_request.topic}
 **Class Level:** {viva_request.class_level}
 **Session Duration:** 5 minutes maximum
 
-**Your Role:**
-1.  **Welcome**: Start by welcoming the student and stating the topic.
-2.  **Questioning**: Ask **one question at a time**. Wait for the student's answer.
-    -   Generate questions dynamically based on the topic and the student's responses.
-    -   Start with easier questions and increase difficulty if they answer correctly.
-    -   If they struggle, provide a hint or ask a simpler follow-up.
-3.  **Evaluation**: Internally evaluate their answers. Do not explicitly state 'Correct' or 'Incorrect' after every answer, but guide the conversation naturally.
-4.  **Conclusion**: After asking 5-7 questions or if the time is up, conclude the session.
-    -   Use the `conclude_viva` tool to submit the final score (out of 10) and detailed feedback.
-    -   Say a polite goodbye to the student.
+**Your Role & Protocol:**
+1.  **Welcome**: Start by welcoming the student and stating the topic clearly.
+2.  **Questioning**: Ask **one question at a time**.
+    -   Generate questions dynamically based on the topic and class level.
+    -   Keep questions conversational but academically rigorous.
+    -   Start with fundamental concepts. If answered correctly, increase difficulty.
+    -   If the student struggles, provide a small hint or ask a simpler follow-up.
+3.  **Evaluation (Internal)**: You must mentally track their performance.
+    -   Start with a baseline score of 10/10.
+    -   Deduct points for factual errors, inability to explain concepts, or requiring too many hints.
+    -   Note down specific strengths and weaknesses as you go.
+4.  **Conclusion**: After asking 5-7 questions OR if the user indicates they want to stop (e.g., "End viva"), you MUST conclude the session in **two steps**:
+    a.  **First, speak your conclusion out loud.** Thank the student for their time, give a brief verbal summary of how they did (e.g., "You demonstrated a solid understanding of X and Y. I'd suggest reviewing Z for next time."), and say a warm goodbye.
+    b.  **Then, immediately after you finish speaking, call the `conclude_viva` tool** with the final score and detailed written feedback.
 
-**Important Session Limits:**
-- The session is limited to 5 minutes.
-- You will receive a warning before the session ends.
-- Conclude the viva gracefully if you receive a termination warning.
-
-**Tools You Must Use:**
-- **conclude_viva**: When you've asked enough questions or time is running out, use this to end the viva and generate final feedback.
-
-**Important Instructions:**
-- Speak naturally and encouragingly in audio responses.
-- Wait for the student to finish speaking before evaluating.
-- Be supportive but accurate in your evaluations.
-- Do NOT ask multiple questions at once. Keep your responses concise.
+**Strict Rules:**
+-   **DO NOT** provide a running score after every question.
+-   **DO NOT** say "Correct" or "Incorrect" robotically. Respond naturally (e.g., "That's a great point, but have you considered...").
+-   When using `conclude_viva`, ensure the `strong_points` and `areas_of_improvement` are specific to the topics discussed, not generic advice.
+-   **CRITICAL:** You MUST speak your concluding remarks BEFORE calling the `conclude_viva` tool. Do not call the tool silently.
 """
-    logger.debug("System instruction generated successfully.")
     return system_instruction.strip()
 
 
@@ -103,82 +106,48 @@ async def create_ephemeral_token(viva_request: VivaStartRequest) -> dict:
     """
     Creates a secure, short-lived ephemeral token that the client will use
     to connect to the Google Live API.
-
-    Args:
-        viva_request (VivaStartRequest): The viva session details.
-
-    Returns:
-        dict: Dictionary containing the token and configuration details.
     """
     logger.info(
         f"Starting ephemeral token creation for viva session. Student: {viva_request.student_name}"
     )
 
     try:
-        # Initialize the Google GenAI client with your API key
         client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-        logger.debug("Google GenAI client initialized.")
 
-        # Generate the system instruction
         system_instruction = generate_system_instruction(viva_request)
 
-        # Combine all tool declarations into a single list
-        tool_declarations = [
-            conclude_viva_tool,
-        ]
+        # We only need the conclude tool now, as we aren't saving turns individually
+        tool_declarations = [conclude_viva_tool]
 
-        # Build the config for the Live API
         live_config = {
-            "session_resumption": {},  # Enable session resumption
-            "response_modalities": ["AUDIO"],  # AI responds with audio
+            "session_resumption": {},
+            "response_modalities": ["AUDIO"],
             "system_instruction": system_instruction,
             "tools": [{"function_declarations": tool_declarations}],
-            "input_audio_transcription": {},  # Enable input transcription
-            "output_audio_transcription": {},  # Enable output transcription
+            "input_audio_transcription": {},
+            "output_audio_transcription": {},
         }
 
-        # Add voice configuration if specified
         if viva_request.voice_name:
-            logger.debug(f"Configuring voice: {viva_request.voice_name}")
             live_config["speech_config"] = {
                 "voice_config": {
                     "prebuilt_voice_config": {"voice_name": viva_request.voice_name}
                 }
             }
 
-        # Add thinking configuration if enabled
-        if viva_request.enable_thinking and viva_request.thinking_budget > 0:
-            logger.debug(f"Configuring thinking budget: {viva_request.thinking_budget}")
-            live_config["thinking_config"] = {
-                "thinking_budget": viva_request.thinking_budget,
-                "include_thoughts": False,  # Do not include thought summaries in responses
-            }
-
-        # Configure the ephemeral token with Live API constraints
-        # Session limited to 5 minutes
         token_config = {
-            "uses": 1,  # Token can only be used once
+            "uses": 1,
             "expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
-            + datetime.timedelta(minutes=5),  # 5-minute session limit
-            "new_session_expire_time": datetime.datetime.now(tz=datetime.timezone.utc)
-            + datetime.timedelta(minutes=2),  # 2 minutes to start session
+            + datetime.timedelta(minutes=15),
             "live_connect_constraints": {
                 "model": MODEL_NAME,
                 "config": live_config,
             },
-            # http_options for v1alpha must be inside config
             "http_options": {"api_version": "v1alpha"},
         }
 
-        logger.debug("Requesting ephemeral token from Google API...")
-
-        # Create the token using the v1alpha API
-        # Use client.aio.auth_tokens.create for async call
         token = await client.aio.auth_tokens.create(config=token_config)
 
-        logger.info(f"Ephemeral token created successfully. Token name: {token.name}")
-
-        # FIX: The token string is in the 'name' attribute, NOT 'token'
         return {
             "token": token.name,
             "voice_name": viva_request.voice_name or "Kore",
