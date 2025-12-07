@@ -7,6 +7,7 @@ maintains loose coupling between the business logic and external AI providers.
 
 Any service interacting with an LLM must implement this protocol to ensure
 consistent behavior across different model backends.
+new file
 """
 
 from typing import Protocol, Dict, Any
