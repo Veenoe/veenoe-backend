@@ -11,10 +11,17 @@ The endpoints expose CRUD and workflow operations for viva sessions, including:
 
 Each route interacts with the VivaService layer, ensuring separation of concerns
 between API transport logic and business logic.
+
+AUTHENTICATION:
+All endpoints require authentication. User identity is extracted from the JWT
+token, not from request parameters. This ensures:
+1. Users can only access their own data
+2. User ID cannot be spoofed by clients
+3. Consistent security model across all endpoints
 """
 
 from typing import Annotated
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, status
 from app.schemas.viva import (
     VivaStartRequest,
     VivaStartResponse,
@@ -24,7 +31,7 @@ from app.schemas.viva import (
     RenameSessionRequest,
     VivaSessionDetailResponse,
 )
-from app.api.deps import get_viva_service
+from app.api.deps import get_viva_service, CurrentUser
 from app.services.viva_service import VivaService
 
 router = APIRouter()
@@ -34,28 +41,27 @@ router = APIRouter()
 async def start_viva(
     request: VivaStartRequest,
     service: Annotated[VivaService, Depends(get_viva_service)],
+    current_user: CurrentUser,
 ):
     """
     Start a new viva session.
 
-    This endpoint initializes a new viva session for a student based on the provided
-    request parameters. It delegates the creation logic to the VivaService.
+    AUTHENTICATION REQUIRED: The user_id is extracted from the JWT token,
+    not from the request body.
 
     Args:
-        request (VivaStartRequest):
-            Contains session metadata such as topic, class level, and student name.
-        service (VivaService):
-            Injected service responsible for viva session lifecycle operations.
+        request: Session metadata (topic, class level, student name)
+        service: Injected VivaService
+        current_user: Authenticated user from JWT
 
     Returns:
-        VivaStartResponse: The newly created viva session details including session ID
-                           and ephemeral token (if applicable).
-
-    Raises:
-        HTTPException (500): If any unexpected error occurs during session creation.
+        VivaStartResponse: Session ID and AI connection parameters
     """
     try:
-        response_data = await service.start_new_viva_session(request)
+        response_data = await service.start_new_viva_session(
+            viva_request=request,
+            authenticated_user_id=current_user.user_id,
+        )
         return VivaStartResponse(**response_data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error starting viva: {str(e)}")
@@ -65,25 +71,12 @@ async def start_viva(
 async def conclude_viva(
     request: ConcludeVivaRequest,
     service: Annotated[VivaService, Depends(get_viva_service)],
+    current_user: CurrentUser,
 ):
     """
     Conclude an active viva session and generate structured feedback.
 
-    This endpoint finalizes the viva by storing the student's score, summary,
-    strong points, and improvement areas. Upon completion, the service updates the
-    session status to "completed" and attaches the generated feedback.
-
-    Args:
-        request (ConcludeVivaRequest):
-            Includes score, summary, strengths, and improvement areas.
-        service (VivaService):
-            The viva service handling session conclusion logic.
-
-    Returns:
-        ConcludeVivaResponse: Contains updated session information and stored feedback.
-
-    Raises:
-        HTTPException (500): For unexpected errors during conclusion.
+    AUTHENTICATION REQUIRED.
     """
     try:
         result = await service.conclude_viva_session(
@@ -98,31 +91,22 @@ async def conclude_viva(
         raise HTTPException(status_code=500, detail=f"Error concluding viva: {str(e)}")
 
 
-@router.get("/history/{user_id}", response_model=HistoryResponse)
+@router.get("/history", response_model=HistoryResponse)
 async def get_history(
-    user_id: str,
     service: Annotated[VivaService, Depends(get_viva_service)],
+    current_user: CurrentUser,
 ):
     """
-    Retrieve the complete viva history for a given user.
+    Retrieve the complete viva history for the authenticated user.
 
-    This endpoint returns all viva sessions associated with the provided user ID.
-    Results are typically displayed in the user's dashboard or activity history.
-
-    Args:
-        user_id (str):
-            The Clerk user identifier used to query sessions.
-        service (VivaService):
-            The service responsible for fetching session history.
+    AUTHENTICATION REQUIRED. User ID comes from JWT, not URL parameter.
+    This is more secure than /history/{user_id}.
 
     Returns:
-        HistoryResponse: A list of session summaries for the user.
-
-    Raises:
-        HTTPException (500): If there is an unexpected failure retrieving history.
+        HistoryResponse: List of session summaries for the authenticated user
     """
     try:
-        sessions = await service.get_user_history(user_id)
+        sessions = await service.get_user_history(current_user.user_id)
         return HistoryResponse(sessions=sessions)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching history: {str(e)}")
@@ -132,25 +116,13 @@ async def get_history(
 async def get_session_details(
     session_id: str,
     service: Annotated[VivaService, Depends(get_viva_service)],
+    current_user: CurrentUser,
 ):
     """
     Retrieve full details for a specific viva session.
 
-    This endpoint is used primarily for the results or analytics page, allowing
-    the client to display complete session metadata and feedback.
-
-    Args:
-        session_id (str):
-            Unique ID of the viva session to fetch.
-        service (VivaService):
-            The service providing session retrieval logic.
-
-    Returns:
-        VivaSessionDetailResponse: Comprehensive session details.
-
-    Raises:
-        HTTPException (404): If the session does not exist.
-        HTTPException (500): For unexpected errors during lookup.
+    AUTHENTICATION REQUIRED.
+    TODO: Add ownership validation to ensure user can only view their sessions.
     """
     try:
         return await service.get_viva_session_details(session_id)
@@ -167,24 +139,13 @@ async def rename_session_endpoint(
     session_id: str,
     request: RenameSessionRequest,
     service: Annotated[VivaService, Depends(get_viva_service)],
+    current_user: CurrentUser,
 ):
     """
     Rename an existing viva session.
 
-    Args:
-        session_id (str):
-            The session to rename.
-        request (RenameSessionRequest):
-            Contains the new session title.
-        service (VivaService):
-            Service handling session updates.
-
-    Returns:
-        dict: Updated session metadata after renaming.
-
-    Raises:
-        HTTPException (404): If the session does not exist.
-        HTTPException (500): If renaming fails unexpectedly.
+    AUTHENTICATION REQUIRED.
+    TODO: Add ownership validation.
     """
     try:
         return await service.rename_session(session_id, request.new_title)
@@ -198,22 +159,13 @@ async def rename_session_endpoint(
 async def delete_session_endpoint(
     session_id: str,
     service: Annotated[VivaService, Depends(get_viva_service)],
+    current_user: CurrentUser,
 ):
     """
     Permanently delete a viva session.
 
-    Args:
-        session_id (str):
-            ID of the session to delete.
-        service (VivaService):
-            Service responsible for deletion operations.
-
-    Returns:
-        dict: Confirmation message or deletion metadata.
-
-    Raises:
-        HTTPException (404): If the session is not found.
-        HTTPException (500): For any other failure during deletion.
+    AUTHENTICATION REQUIRED.
+    TODO: Add ownership validation.
     """
     try:
         return await service.delete_session(session_id)

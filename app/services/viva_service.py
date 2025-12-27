@@ -43,7 +43,11 @@ class VivaService:
     # ----------------------------------------------------------------------
     # Start New Session
     # ----------------------------------------------------------------------
-    async def start_new_viva_session(self, viva_request: VivaStartRequest) -> dict:
+    async def start_new_viva_session(
+        self,
+        viva_request: VivaStartRequest,
+        authenticated_user_id: str,
+    ) -> dict:
         """
         Create and persist a new viva session, then request an ephemeral
         AI token to begin the interactive viva process.
@@ -56,14 +60,16 @@ class VivaService:
         Args:
             viva_request (VivaStartRequest): Input details such as student name,
                 topic, class level, session type, and voice preference.
+            authenticated_user_id (str): The verified user ID from JWT token.
+                This is the ONLY trusted source of user identity.
 
         Returns:
             dict: Metadata required by the client to join the live AI session.
         """
-        # Create session record
+        # Create session record with authenticated user ID (from JWT, not request)
         new_session = VivaSession(
             student_name=viva_request.student_name,
-            user_id=viva_request.user_id,
+            user_id=authenticated_user_id,  # From JWT, never from request
             title=viva_request.topic,
             session_type=viva_request.session_type or "viva",
             topic=viva_request.topic,

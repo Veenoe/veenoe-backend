@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # Production Frontend URL (optional, for CORS)
     FRONTEND_URL: str | None = None
 
+    # Clerk Authentication (Official SDK)
+    # Get from Clerk Dashboard → API Keys (starts with sk_test_ or sk_live_)
+    CLERK_SECRET_KEY: str
+
     # Configure the settings to load from a .env file
     model_config = SettingsConfigDict(env_file=".env")
 

@@ -1,7 +1,17 @@
+# Core Framework
 fastapi
 uvicorn[standard]
+pydantic-settings
+
+# Database
 motor
 beanie
+
+# Environment
 python-dotenv
+
+# AI
 google-genai
-pydantic-settings
+
+# Authentication (Official Clerk SDK)
+clerk-backend-api
