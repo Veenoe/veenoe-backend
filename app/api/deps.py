@@ -7,16 +7,16 @@ and VivaService, ensuring a clean and testable architecture.
 
 Key Design Principles:
 ----------------------
-1. **Dependency Injection (DI)**  
+1. **Dependency Injection (DI)**
    Services are provided through FastAPI's `Depends()` mechanism,
    which makes route handlers simple, testable, and free of manual wiring.
 
-2. **Singleton LLM Service**  
+2. **Singleton LLM Service**
    The LLM provider (GeminiService) is expensive to initialize and
-   should not be created per request.  
+   should not be created per request.
    We use `@lru_cache` to build a process-wide singleton.
 
-3. **Composable Services**  
+3. **Composable Services**
    Higher-level services (e.g., VivaService) receive dependencies
    via constructor injection, aligning with clean architecture
    and promoting loose coupling.
@@ -29,6 +29,15 @@ from fastapi import Depends
 from app.interfaces.llm_client import LLMClient
 from app.services.gemini_service import GeminiService
 from app.services.viva_service import VivaService
+
+# Re-export authentication dependencies for easy import in routes
+from app.core.auth import (
+    CurrentUser,
+    OptionalUser,
+    AuthenticatedUser,
+    get_current_user,
+    get_current_user_optional,
+)
 
 
 # ----------------------------------------------------------------------

@@ -3,9 +3,16 @@ This module handles the application's configuration management.
 
 It uses pydantic-settings to load configuration variables (like database
 URIs and API keys) from environment variables or a .env file.
+
+Design Decisions (First Principles):
+1. All sensitive data comes from environment variables, never hardcoded.
+2. Reasonable defaults where security permits.
+3. Clear documentation for each setting.
 """
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
@@ -17,16 +24,41 @@ class Settings(BaseSettings):
     """
 
     # MongoDB connection string
-    MONGO_URI: str
+    MONGO_URI: str = Field(..., description="MongoDB connection string")
 
     # Google AI Studio API Key
-    GOOGLE_API_KEY: str
+    GOOGLE_API_KEY: str = Field(..., description="Google AI Studio API Key")
 
     # The name of the MongoDB database to use
-    MONGO_DB_NAME: str
+    MONGO_DB_NAME: str = Field(..., description="MongoDB database name")
 
     # Production Frontend URL (optional, for CORS)
-    FRONTEND_URL: str | None = None
+    FRONTEND_URL: Optional[str] = Field(
+        default=None, description="Production frontend URL for CORS"
+    )
+
+    # Additional CORS origins (comma-separated in env var)
+    # Example: CORS_ORIGINS=https://veenoe.com,https://www.veenoe.com
+    CORS_ORIGINS: List[str] = Field(
+        default_factory=list,
+        description="Additional CORS origins (comma-separated)",
+    )
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse comma-separated CORS origins from environment variable."""
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v or []
+
+    # Clerk Authentication (Official SDK)
+    # Get from Clerk Dashboard → API Keys (starts with sk_test_ or sk_live_)
+    CLERK_SECRET_KEY: str = Field(
+        ..., description="Clerk secret key for authentication"
+    )
 
     # Configure the settings to load from a .env file
     model_config = SettingsConfigDict(env_file=".env")
