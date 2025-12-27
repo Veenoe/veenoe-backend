@@ -18,10 +18,18 @@ token, not from request parameters. This ensures:
 1. Users can only access their own data
 2. User ID cannot be spoofed by clients
 3. Consistent security model across all endpoints
+
+SECURITY (First Principles):
+1. Input validation at the API layer (fail fast)
+2. Generic error messages to clients (no internal data leaks)
+3. Full error logging server-side for debugging
 """
 
+import logging
 from typing import Annotated
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from app.schemas.viva import (
     VivaStartRequest,
     VivaStartResponse,
@@ -34,12 +42,34 @@ from app.schemas.viva import (
 from app.api.deps import get_viva_service, CurrentUser
 from app.services.viva_service import VivaService
 
+logger = logging.getLogger(__name__)
+
+# Rate limiter instance (uses same key_func as main app)
+limiter = Limiter(key_func=get_remote_address)
+
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Common Path Parameter Validation
+# ---------------------------------------------------------------------------
+# MongoDB ObjectId is 24 hex characters. Validate at API layer to fail fast.
+SessionIdPath = Annotated[
+    str,
+    Path(
+        min_length=24,
+        max_length=24,
+        pattern=r"^[a-fA-F0-9]{24}$",
+        description="MongoDB ObjectId (24 hex characters)",
+        examples=["507f1f77bcf86cd799439011"],
+    ),
+]
 
 
 @router.post("/start", response_model=VivaStartResponse)
+@limiter.limit("5/minute")  # Protect Gemini API quota
 async def start_viva(
-    request: VivaStartRequest,
+    request: Request,  # Required by SlowAPI
+    viva_request: VivaStartRequest,
     service: Annotated[VivaService, Depends(get_viva_service)],
     current_user: CurrentUser,
 ):
@@ -50,7 +80,8 @@ async def start_viva(
     not from the request body.
 
     Args:
-        request: Session metadata (topic, class level, student name)
+        request: FastAPI Request object (required by SlowAPI)
+        viva_request: Session metadata (topic, class level, student name)
         service: Injected VivaService
         current_user: Authenticated user from JWT
 
@@ -59,12 +90,22 @@ async def start_viva(
     """
     try:
         response_data = await service.start_new_viva_session(
-            viva_request=request,
+            viva_request=viva_request,
             user_id=current_user.user_id,
         )
         return VivaStartResponse(**response_data)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error starting viva: {str(e)}")
+        # Log full error server-side for debugging
+        logger.exception(
+            "Error starting viva for user %s: %s",
+            current_user.user_id,
+            str(e),
+        )
+        # Return generic message to client (no internal details)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to start session. Please try again.",
+        )
 
 
 @router.post("/conclude-viva", response_model=ConcludeVivaResponse)
@@ -93,7 +134,15 @@ async def conclude_viva(
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error concluding viva: {str(e)}")
+        logger.exception(
+            "Error concluding viva %s for user %s",
+            request.viva_session_id,
+            current_user.user_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to conclude session. Please try again.",
+        )
 
 
 @router.get("/history", response_model=HistoryResponse)
@@ -114,12 +163,16 @@ async def get_history(
         sessions = await service.get_user_history(current_user.user_id)
         return HistoryResponse(sessions=sessions)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching history: {str(e)}")
+        logger.exception("Error fetching history for user %s", current_user.user_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch history. Please try again.",
+        )
 
 
 @router.get("/{session_id}", response_model=VivaSessionDetailResponse)
 async def get_session_details(
-    session_id: str,
+    session_id: SessionIdPath,
     service: Annotated[VivaService, Depends(get_viva_service)],
 ):
     """
@@ -133,14 +186,16 @@ async def get_session_details(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.exception("Error fetching session details for %s", session_id)
         raise HTTPException(
-            status_code=500, detail=f"Error fetching session details: {str(e)}"
+            status_code=500,
+            detail="Failed to fetch session details. Please try again.",
         )
 
 
 @router.patch("/{session_id}/rename")
 async def rename_session_endpoint(
-    session_id: str,
+    session_id: SessionIdPath,
     request: RenameSessionRequest,
     service: Annotated[VivaService, Depends(get_viva_service)],
     current_user: CurrentUser,
@@ -161,12 +216,20 @@ async def rename_session_endpoint(
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error renaming session: {str(e)}")
+        logger.exception(
+            "Error renaming session %s for user %s",
+            session_id,
+            current_user.user_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to rename session. Please try again.",
+        )
 
 
 @router.delete("/{session_id}")
 async def delete_session_endpoint(
-    session_id: str,
+    session_id: SessionIdPath,
     service: Annotated[VivaService, Depends(get_viva_service)],
     current_user: CurrentUser,
 ):
@@ -185,4 +248,12 @@ async def delete_session_endpoint(
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting session: {str(e)}")
+        logger.exception(
+            "Error deleting session %s for user %s",
+            session_id,
+            current_user.user_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to delete session. Please try again.",
+        )

@@ -1,17 +1,20 @@
 # Core Framework
-fastapi
-uvicorn[standard]
-pydantic-settings
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic-settings>=2.6.0
 
 # Database
-motor
-beanie
+motor>=3.6.0
+beanie>=1.28.0
 
 # Environment
-python-dotenv
+python-dotenv>=1.0.0
 
 # AI
-google-genai
+google-genai>=1.0.0
 
 # Authentication (Official Clerk SDK)
-clerk-backend-api
+clerk-backend-api>=1.4.0
+
+# Rate Limiting
+slowapi>=0.1.9
