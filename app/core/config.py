@@ -39,20 +39,10 @@ class Settings(BaseSettings):
 
     # Additional CORS origins (comma-separated in env var)
     # Example: CORS_ORIGINS=https://veenoe.com,https://www.veenoe.com
-    CORS_ORIGINS: List[str] = Field(
-        default_factory=list,
+    CORS_ORIGINS: str = Field(
+        default="",
         description="Additional CORS origins (comma-separated)",
     )
-
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v):
-        """Parse comma-separated CORS origins from environment variable."""
-        if isinstance(v, str):
-            if not v.strip():
-                return []
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v or []
 
     # Clerk Authentication (Official SDK)
     # Get from Clerk Dashboard → API Keys (starts with sk_test_ or sk_live_)

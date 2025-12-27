@@ -66,20 +66,13 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Define allowed origins for CORS
-# Base origins for local development
 origins = [
     "http://localhost:3000",  # React default
     "http://localhost:5173",  # Vite default
     "http://localhost:8080",  # Alternative frontend port
+    "https://veenoe.com",  # Production root domain
+    "https://www.veenoe.com",  # Production subdomain
 ]
-
-# Add production origins from settings
-if settings.FRONTEND_URL:
-    origins.append(settings.FRONTEND_URL)
-
-# Add additional configured origins
-if settings.CORS_ORIGINS:
-    origins.extend(settings.CORS_ORIGINS)
 
 # Add CORS middleware to allow frontend communication
 app.add_middleware(
