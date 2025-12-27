@@ -60,7 +60,7 @@ async def start_viva(
     try:
         response_data = await service.start_new_viva_session(
             viva_request=request,
-            authenticated_user_id=current_user.user_id,
+            user_id=current_user.user_id,
         )
         return VivaStartResponse(**response_data)
     except Exception as e:
@@ -149,7 +149,7 @@ async def rename_session_endpoint(
         return await service.rename_session(
             session_id=session_id,
             new_title=request.new_title,
-            authenticated_user_id=current_user.user_id,
+            user_id=current_user.user_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -173,7 +173,7 @@ async def delete_session_endpoint(
     try:
         return await service.delete_session(
             session_id=session_id,
-            authenticated_user_id=current_user.user_id,
+            user_id=current_user.user_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
