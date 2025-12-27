@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 import datetime
 
-
 # --- Shared Models ---
 class VivaFeedback(BaseModel):
     score: int
@@ -18,23 +17,15 @@ class VivaFeedback(BaseModel):
 
 # == Viva Start Schemas ==
 
-
 class VivaStartRequest(BaseModel):
-    """
-    Request to start a new viva session.
-
-    Note: user_id is NOT included here - it comes from the authenticated
-    JWT token to prevent client-side spoofing.
-    """
-
     student_name: str = Field(..., example="John Doe")
+    user_id: str = Field(..., description="The Clerk User ID")
     topic: str = Field(..., example="Python Programming")
     class_level: int = Field(..., example=12)
     session_type: Optional[str] = Field(default="viva")
     voice_name: Optional[str] = Field(default="Kore")
     enable_thinking: Optional[bool] = Field(default=True)
     thinking_budget: Optional[int] = Field(default=1024)
-
 
 class VivaStartResponse(BaseModel):
     viva_session_id: str
@@ -43,9 +34,7 @@ class VivaStartResponse(BaseModel):
     session_duration_minutes: int
     voice_name: str
 
-
 # == Conclude Viva Schemas ==
-
 
 class ConcludeVivaRequest(BaseModel):
     viva_session_id: str
@@ -54,15 +43,12 @@ class ConcludeVivaRequest(BaseModel):
     strong_points: List[str]
     areas_of_improvement: List[str]
 
-
 class ConcludeVivaResponse(BaseModel):
     status: str = "completed"
     score: int
     final_feedback: str
 
-
 # == History & Retrieval Schemas ==
-
 
 class VivaSessionSummary(BaseModel):
     viva_session_id: str
@@ -72,7 +58,6 @@ class VivaSessionSummary(BaseModel):
     started_at: datetime.datetime
     session_type: str
     status: str
-
 
 # NEW: Schema for fetching a single full session details
 class VivaSessionDetailResponse(BaseModel):
@@ -86,17 +71,8 @@ class VivaSessionDetailResponse(BaseModel):
     status: str
     feedback: Optional[VivaFeedback] = None
 
-
 class HistoryResponse(BaseModel):
     sessions: list[VivaSessionSummary]
 
-
 class RenameSessionRequest(BaseModel):
-    """Request to rename a viva session."""
-
-    new_title: str = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description="New title for the session (1-200 characters)",
-    )
+    new_title: str
