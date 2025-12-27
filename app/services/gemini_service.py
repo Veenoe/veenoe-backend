@@ -53,10 +53,6 @@ class GeminiService:
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "viva_session_id": {
-                    "type": "STRING",
-                    "description": "The ID of the current viva session.",
-                },
                 "score": {
                     "type": "INTEGER",
                     "description": (
@@ -84,7 +80,6 @@ class GeminiService:
                 },
             },
             "required": [
-                "viva_session_id",
                 "score",
                 "summary",
                 "strong_points",
