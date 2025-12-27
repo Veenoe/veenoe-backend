@@ -76,7 +76,7 @@ async def conclude_viva(
     """
     Conclude an active viva session and generate structured feedback.
 
-    AUTHENTICATION REQUIRED.
+    AUTHENTICATION REQUIRED. Only the session owner can conclude.
     """
     try:
         result = await service.conclude_viva_session(
@@ -85,8 +85,13 @@ async def conclude_viva(
             summary=request.summary,
             strong_points=request.strong_points,
             areas_of_improvement=request.areas_of_improvement,
+            user_id=current_user.user_id,
         )
         return ConcludeVivaResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error concluding viva: {str(e)}")
 

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
 
 import httpx
-from clerk_backend_api import authenticate_request
+from clerk_backend_api.security import authenticate_request
 from clerk_backend_api.security.types import AuthenticateRequestOptions
 
 from app.core.config import settings
@@ -144,18 +144,16 @@ class ClerkAuthService:
 
 
 # ---------------------------------------------------------------------------
-# Singleton Accessor
+# Singleton Accessor (Thread-Safe)
 # ---------------------------------------------------------------------------
-_auth_service: Optional[ClerkAuthService] = None
+from functools import lru_cache
 
 
+@lru_cache(maxsize=1)
 def get_auth_service() -> ClerkAuthService:
     """
     Get the singleton ClerkAuthService instance.
 
-    Using a singleton ensures consistent configuration across requests.
+    Uses lru_cache for thread-safe lazy initialization.
     """
-    global _auth_service
-    if _auth_service is None:
-        _auth_service = ClerkAuthService()
-    return _auth_service
+    return ClerkAuthService()

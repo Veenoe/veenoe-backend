@@ -92,4 +92,11 @@ class HistoryResponse(BaseModel):
 
 
 class RenameSessionRequest(BaseModel):
-    new_title: str
+    """Request to rename a viva session."""
+
+    new_title: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="New title for the session (1-200 characters)",
+    )

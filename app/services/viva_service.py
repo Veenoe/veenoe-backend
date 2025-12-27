@@ -7,12 +7,16 @@ and easy to extend when adding new LLM or model providers.
 """
 
 import datetime
+import logging
 from bson import ObjectId
+from bson.errors import InvalidId
 from typing import List
 
 from app.db.models import VivaSession, VivaFeedback
 from app.schemas.viva import VivaStartRequest
 from app.interfaces.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 class VivaService:
@@ -101,27 +105,31 @@ class VivaService:
         summary: str,
         strong_points: List[str],
         areas_of_improvement: List[str],
+        user_id: str,
     ) -> dict:
         """
         Finalize a viva session by attaching AI-generated feedback,
         updating session status, and marking the ending timestamp.
 
+        Only the session owner can conclude it.
+
         Args:
-            viva_session_id (str): ID of the viva session to conclude.
-            score (int): Final evaluation score assigned by the AI.
-            summary (str): Summary feedback and narrative evaluation.
-            strong_points (List[str]): Topics the student performed well in.
-            areas_of_improvement (List[str]): Topics needing improvement.
+            viva_session_id: ID of the viva session to conclude.
+            score: Final evaluation score assigned by the AI.
+            summary: Summary feedback and narrative evaluation.
+            strong_points: Topics the student performed well in.
+            areas_of_improvement: Topics needing improvement.
+            user_id: The authenticated user ID (must be session owner).
 
         Returns:
             dict: Minimal response confirming completion and including score.
 
         Raises:
-            ValueError: If the session does not exist.
+            ValueError: If the session does not exist or ID is invalid.
+            PermissionError: If the user does not own the session.
         """
-        session = await VivaSession.get(ObjectId(viva_session_id))
-        if not session:
-            raise ValueError(f"Viva session {viva_session_id} not found")
+        # Validate and get session with ownership check
+        session = await self._get_session_with_ownership_check(viva_session_id, user_id)
 
         # Construct feedback object
         feedback_data = VivaFeedback(
@@ -137,6 +145,7 @@ class VivaService:
         session.ended_at = datetime.datetime.now(tz=datetime.timezone.utc)
 
         await session.save()
+        logger.info("Session %s concluded by user %s", viva_session_id, user_id)
 
         return {
             "status": "completed",
@@ -151,17 +160,25 @@ class VivaService:
         """
         Retrieve complete metadata for a specific viva session.
 
+        This is a public method - no ownership check required.
+
         Args:
-            session_id (str): The unique ID of the session.
+            session_id: The unique ID of the session.
 
         Returns:
             dict: Fully serialized session data including timestamps,
                 class info, and feedback (if available).
 
         Raises:
-            ValueError: If no session matches the provided ID.
+            ValueError: If no session matches the provided ID or ID is invalid.
         """
-        session = await VivaSession.get(ObjectId(session_id))
+        # Validate ObjectId format
+        try:
+            object_id = ObjectId(session_id)
+        except InvalidId:
+            raise ValueError(f"Invalid session ID format: {session_id}")
+
+        session = await VivaSession.get(object_id)
         if not session:
             raise ValueError(f"Viva session {session_id} not found")
 
@@ -234,14 +251,26 @@ class VivaService:
             VivaSession: The session if found and owned by the user.
 
         Raises:
-            ValueError: If the session does not exist.
+            ValueError: If the session does not exist or ID format is invalid.
             PermissionError: If the user does not own the session.
         """
-        session = await VivaSession.get(ObjectId(session_id))
+        # Validate ObjectId format
+        try:
+            object_id = ObjectId(session_id)
+        except InvalidId:
+            raise ValueError(f"Invalid session ID format: {session_id}")
+
+        session = await VivaSession.get(object_id)
         if not session:
             raise ValueError(f"Viva session {session_id} not found")
 
         if session.user_id != user_id:
+            logger.warning(
+                "User %s attempted to access session %s owned by %s",
+                user_id,
+                session_id,
+                session.user_id,
+            )
             raise PermissionError("You do not have permission to modify this session")
 
         return session
@@ -272,9 +301,7 @@ class VivaService:
             ValueError: If the session does not exist.
             PermissionError: If the user does not own the session.
         """
-        session = await self._get_session_with_ownership_check(
-            session_id, user_id
-        )
+        session = await self._get_session_with_ownership_check(session_id, user_id)
 
         session.title = new_title
         await session.save()
@@ -305,9 +332,7 @@ class VivaService:
             ValueError: If the session does not exist.
             PermissionError: If the user does not own the session.
         """
-        session = await self._get_session_with_ownership_check(
-            session_id, user_id
-        )
+        session = await self._get_session_with_ownership_check(session_id, user_id)
 
         await session.delete()
         return {"status": "success", "message": "Session deleted successfully"}
