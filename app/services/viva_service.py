@@ -216,25 +216,65 @@ class VivaService:
         return history
 
     # ----------------------------------------------------------------------
+    # Ownership Validation Helper
+    # ----------------------------------------------------------------------
+    async def _get_session_with_ownership_check(
+        self,
+        session_id: str,
+        authenticated_user_id: str,
+    ) -> "VivaSession":
+        """
+        Retrieve a session and verify the authenticated user owns it.
+
+        Args:
+            session_id: The session to retrieve.
+            authenticated_user_id: The user ID from the JWT token.
+
+        Returns:
+            VivaSession: The session if found and owned by the user.
+
+        Raises:
+            ValueError: If the session does not exist.
+            PermissionError: If the user does not own the session.
+        """
+        session = await VivaSession.get(ObjectId(session_id))
+        if not session:
+            raise ValueError(f"Viva session {session_id} not found")
+
+        if session.user_id != authenticated_user_id:
+            raise PermissionError("You do not have permission to modify this session")
+
+        return session
+
+    # ----------------------------------------------------------------------
     # Rename Session
     # ----------------------------------------------------------------------
-    async def rename_session(self, session_id: str, new_title: str) -> dict:
+    async def rename_session(
+        self,
+        session_id: str,
+        new_title: str,
+        authenticated_user_id: str,
+    ) -> dict:
         """
         Update the title of an existing viva session.
 
+        Only the session owner can rename it.
+
         Args:
-            session_id (str): ID of the session to rename.
-            new_title (str): New title to assign.
+            session_id: ID of the session to rename.
+            new_title: New title to assign.
+            authenticated_user_id: The user ID from the JWT token.
 
         Returns:
             dict: Operation status and confirmation message.
 
         Raises:
             ValueError: If the session does not exist.
+            PermissionError: If the user does not own the session.
         """
-        session = await VivaSession.get(ObjectId(session_id))
-        if not session:
-            raise ValueError(f"Viva session {session_id} not found")
+        session = await self._get_session_with_ownership_check(
+            session_id, authenticated_user_id
+        )
 
         session.title = new_title
         await session.save()
@@ -244,22 +284,30 @@ class VivaService:
     # ----------------------------------------------------------------------
     # Delete Session
     # ----------------------------------------------------------------------
-    async def delete_session(self, session_id: str) -> dict:
+    async def delete_session(
+        self,
+        session_id: str,
+        authenticated_user_id: str,
+    ) -> dict:
         """
         Permanently delete a viva session from the system.
 
+        Only the session owner can delete it.
+
         Args:
-            session_id (str): ID of the session to delete.
+            session_id: ID of the session to delete.
+            authenticated_user_id: The user ID from the JWT token.
 
         Returns:
             dict: Operation status and confirmation message.
 
         Raises:
             ValueError: If the session does not exist.
+            PermissionError: If the user does not own the session.
         """
-        session = await VivaSession.get(ObjectId(session_id))
-        if not session:
-            raise ValueError(f"Viva session {session_id} not found")
+        session = await self._get_session_with_ownership_check(
+            session_id, authenticated_user_id
+        )
 
         await session.delete()
         return {"status": "success", "message": "Session deleted successfully"}

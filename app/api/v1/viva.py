@@ -116,13 +116,12 @@ async def get_history(
 async def get_session_details(
     session_id: str,
     service: Annotated[VivaService, Depends(get_viva_service)],
-    current_user: CurrentUser,
 ):
     """
     Retrieve full details for a specific viva session.
 
-    AUTHENTICATION REQUIRED.
-    TODO: Add ownership validation to ensure user can only view their sessions.
+    PUBLIC ENDPOINT - No authentication required.
+    This allows users to share session URLs with others.
     """
     try:
         return await service.get_viva_session_details(session_id)
@@ -144,13 +143,18 @@ async def rename_session_endpoint(
     """
     Rename an existing viva session.
 
-    AUTHENTICATION REQUIRED.
-    TODO: Add ownership validation.
+    AUTHENTICATION REQUIRED. Only the session owner can rename.
     """
     try:
-        return await service.rename_session(session_id, request.new_title)
+        return await service.rename_session(
+            session_id=session_id,
+            new_title=request.new_title,
+            authenticated_user_id=current_user.user_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error renaming session: {str(e)}")
 
@@ -164,12 +168,16 @@ async def delete_session_endpoint(
     """
     Permanently delete a viva session.
 
-    AUTHENTICATION REQUIRED.
-    TODO: Add ownership validation.
+    AUTHENTICATION REQUIRED. Only the session owner can delete.
     """
     try:
-        return await service.delete_session(session_id)
+        return await service.delete_session(
+            session_id=session_id,
+            authenticated_user_id=current_user.user_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting session: {str(e)}")
