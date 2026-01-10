@@ -29,7 +29,7 @@ class VivaStartRequest(BaseModel):
 
     student_name: str = Field(..., example="John Doe")
     topic: str = Field(..., example="Python Programming")
-    class_level: int = Field(..., example=12)
+    class_level: str = Field(..., example="12")
     session_type: Optional[str] = Field(default="viva")
     voice_name: Optional[str] = Field(default="Kore")
     enable_thinking: Optional[bool] = Field(default=True)
@@ -68,7 +68,7 @@ class VivaSessionSummary(BaseModel):
     viva_session_id: str
     title: str
     topic: str
-    class_level: int
+    class_level: str
     started_at: datetime.datetime
     session_type: str
     status: str
@@ -80,7 +80,7 @@ class VivaSessionDetailResponse(BaseModel):
     student_name: str
     title: str
     topic: str
-    class_level: int
+    class_level: str
     started_at: datetime.datetime
     ended_at: Optional[datetime.datetime] = None
     status: str
