@@ -26,26 +26,26 @@ class VivaFeedback(BaseModel):
         strong_points (List[str]): A list highlighting concepts the student excelled in.
         areas_of_improvement (List[str]): A list identifying concepts where improvement is needed.
     """
+
     score: int = Field(
         ...,
         ge=0,
         le=10,
-        description="Score out of 10 representing the student's overall performance"
+        description="Score out of 10 representing the student's overall performance",
     )
 
     summary: str = Field(
-        ...,
-        description="Overall summary of the student's performance during the viva"
+        ..., description="Overall summary of the student's performance during the viva"
     )
 
     strong_points: List[str] = Field(
         default_factory=list,
-        description="List of strong concepts demonstrated by the student"
+        description="List of strong concepts demonstrated by the student",
     )
 
     areas_of_improvement: List[str] = Field(
         default_factory=list,
-        description="List of concepts where the student needs improvement"
+        description="List of concepts where the student needs improvement",
     )
 
 
@@ -78,23 +78,23 @@ class VivaSession(Document):
     # Classification info
     session_type: str = "viva"  # Determines workflow; may be "viva" or "learn"
     topic: Indexed(str)  # Indexed for quicker topic-based retrievals
-    class_level: Indexed(int)  # Indexed for level-based filtering
+    class_level: Indexed(str)  # Indexed for level-based filtering
 
     # Timestamp tracking
     started_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(tz=datetime.timezone.utc),
-        description="Timestamp (UTC) when the viva session was started"
+        description="Timestamp (UTC) when the viva session was started",
     )
 
     ended_at: Optional[datetime.datetime] = Field(
         default=None,
-        description="Timestamp (UTC) when the session ended, if applicable"
+        description="Timestamp (UTC) when the session ended, if applicable",
     )
 
     # Current session state
     status: str = Field(
         default="in_progress",
-        description="Session status: 'in_progress', 'completed', or 'abandoned'"
+        description="Session status: 'in_progress', 'completed', or 'abandoned'",
     )
 
     # Final structured result from the viva evaluation
