@@ -7,7 +7,7 @@
 ![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
 ![Google Gemini](https://img.shields.io/badge/Google_Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)
 
-**Enterprise-Grade AI-Powered Oral Examination Platform**
+**AI-Powered Oral Examination Platform**
 
 [Features](#-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [Deployment](#-deployment)
 
@@ -225,31 +225,31 @@ backend/
 
 ```mermaid
 graph LR
-    subgraph "FastAPI DI Container"
+    subgraph FastAPI_DI_Container["FastAPI DI Container"]
         direction TB
         
-        subgraph "Singleton Services"
-            LLM[get_llm_service<br/>@lru_cache]
-            AUTH[get_auth_service<br/>@lru_cache]
+        subgraph Singleton["Singleton Services"]
+            LLM["get_llm_service @lru_cache"]
+            AUTH["get_auth_service @lru_cache"]
         end
         
-        subgraph "Request Services"
-            VIVA[get_viva_service]
+        subgraph Request["Request Services"]
+            VIVA["get_viva_service"]
         end
     end
     
-    subgraph "Routes"
-        START[/start/]
-        CONCLUDE[/conclude-viva/]
-        HISTORY[/history/]
-        DELETE[DELETE /{id}/]
+    subgraph Routes["Routes"]
+        START["/start"]
+        CONCLUDE["/conclude-viva"]
+        HISTORY["/history"]
+        DELETE["DELETE /{id}"]
     end
     
     LLM --> VIVA
-    AUTH --> |CurrentUser| START
-    AUTH --> |CurrentUser| CONCLUDE
-    AUTH --> |CurrentUser| HISTORY
-    AUTH --> |CurrentUser| DELETE
+    AUTH -->|CurrentUser| START
+    AUTH -->|CurrentUser| CONCLUDE
+    AUTH -->|CurrentUser| HISTORY
+    AUTH -->|CurrentUser| DELETE
     
     VIVA --> START
     VIVA --> CONCLUDE
@@ -451,28 +451,39 @@ Authorization: Bearer <token>
 This codebase follows key architectural principles derived from first principles:
 
 ```mermaid
-mindmap
-  root((Design Principles))
-    Security
-      JWT-based auth
-      Server-side user identity
-      Ephemeral tokens
-      Ownership validation
-    Scalability
-      Async I/O throughout
-      Connection pooling
-      Stateless services
-      Singleton clients
-    Maintainability
-      Clean architecture
-      Dependency injection
-      Protocol-based interfaces
-      Comprehensive logging
-    Reliability
-      Graceful shutdown
-      Health endpoints
-      Rate limiting
-      Error handling
+graph TB
+    ROOT((Design<br/>Principles))
+    
+    ROOT --> SEC[Security]
+    ROOT --> SCA[Scalability]
+    ROOT --> MAI[Maintainability]
+    ROOT --> REL[Reliability]
+    
+    SEC --> SEC1[JWT-based auth]
+    SEC --> SEC2[Server-side user identity]
+    SEC --> SEC3[Ephemeral tokens]
+    SEC --> SEC4[Ownership validation]
+    
+    SCA --> SCA1[Async I/O throughout]
+    SCA --> SCA2[Connection pooling]
+    SCA --> SCA3[Stateless services]
+    SCA --> SCA4[Singleton clients]
+    
+    MAI --> MAI1[Clean architecture]
+    MAI --> MAI2[Dependency injection]
+    MAI --> MAI3[Protocol-based interfaces]
+    MAI --> MAI4[Comprehensive logging]
+    
+    REL --> REL1[Graceful shutdown]
+    REL --> REL2[Health endpoints]
+    REL --> REL3[Rate limiting]
+    REL --> REL4[Error handling]
+    
+    style ROOT fill:#4285f4,color:#fff
+    style SEC fill:#34a853,color:#fff
+    style SCA fill:#ea4335,color:#fff
+    style MAI fill:#fbbc04,color:#fff
+    style REL fill:#9c27b0,color:#fff
 ```
 
 ### Key Architectural Decisions
@@ -488,72 +499,6 @@ mindmap
 
 ---
 
-## Deployment
-
-### Vercel (Recommended)
-
-The project includes `vercel.json` for zero-config deployment:
-
-```bash
-# Install Vercel CLI
-npm i -g vercel
-
-# Deploy
-vercel --prod
-```
-
-### Docker
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app/ ./app/
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### Environment Checklist
-
-- [ ] `MONGO_URI` - MongoDB connection string
-- [ ] `MONGO_DB_NAME` - Database name
-- [ ] `GOOGLE_API_KEY` - Google AI Studio key
-- [ ] `CLERK_SECRET_KEY` - Clerk backend API key
-- [ ] `FRONTEND_URL` - Production frontend URL (optional)
-- [ ] `CORS_ORIGINS` - Additional CORS origins (optional)
-
----
-
-## Development
-
-### Running Tests
-
-```bash
-pytest tests/ -v --cov=app
-```
-
-### Code Style
-
-```bash
-# Format code
-ruff format app/
-
-# Lint
-ruff check app/
-```
-
-### API Documentation
-
-Access interactive documentation at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-- OpenAPI JSON: `http://localhost:8000/openapi.json`
-
----
-
 ## Security Considerations
 
 | Threat | Mitigation |
@@ -566,26 +511,8 @@ Access interactive documentation at:
 
 ---
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## License
-
-Proprietary - All rights reserved.
-
----
-
 <div align="center">
 
-**Built with precision by the Veenoe Team**
-
-[Documentation](#) • [Status Page](#) • [Support](#)
+Follow me on X: **[@kaushalkrsna](https://x.com/kaushalkrsna)**
 
 </div>
