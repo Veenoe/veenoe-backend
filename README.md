@@ -3,13 +3,14 @@
 <div align="center">
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=FastAPI&logoColor=white)
-![Python](https://img.shields.io/badge/Python_3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python_3.11+-FFD43B?style=for-the-badge&logo=python&logoColor=306998)
 ![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
-![Google Gemini](https://img.shields.io/badge/Google_Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)
+![Google Gemini](https://img.shields.io/badge/Gemini-8E75FF?style=for-the-badge&logo=googlegemini&logoColor=white)
+![Clerk](https://img.shields.io/badge/Clerk-6C47FF?style=for-the-badge&logo=clerk&logoColor=white)
 
 **AI-Powered Oral Examination Platform**
 
-[Features](#-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [Deployment](#-deployment)
+[Features](#-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Reference](#-api-reference)
 
 </div>
 
@@ -280,6 +281,7 @@ graph LR
 ### Prerequisites
 
 - Python 3.11 or higher
+- [uv](https://docs.astral.sh/uv/) - Fast Python package manager
 - MongoDB Atlas account (or local MongoDB)
 - Google AI Studio API key
 - Clerk account for authentication
@@ -288,9 +290,9 @@ graph LR
 
 1. **Clone and setup virtual environment**
    ```bash
-   git clone <repository-url>
-   cd backend
-   python -m venv .venv
+   git clone https://github.com/Veenoe/veenoe-backend.git
+   cd veenoe-backend
+   uv venv
    
    # Windows
    .venv\Scripts\activate
@@ -301,7 +303,7 @@ graph LR
 
 2. **Install dependencies**
    ```bash
-   pip install -r requirements.txt
+   uv pip install -r requirements.txt
    ```
 
 3. **Configure environment variables**
