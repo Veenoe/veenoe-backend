@@ -13,6 +13,7 @@ Design Decisions (First Principles):
 4. Health Check Support: verify_connection() for production health endpoints.
 """
 
+import asyncio
 import logging
 import motor.motor_asyncio
 from beanie import init_beanie
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 # The client is stored at module level for process-wide reuse.
 # This is thread-safe in Python due to the GIL.
 _client: motor.motor_asyncio.AsyncIOMotorClient | None = None
+_is_initialized = False
+_init_lock = asyncio.Lock()
 
 
 def get_client() -> motor.motor_asyncio.AsyncIOMotorClient:
@@ -69,18 +72,37 @@ async def init_db() -> None:
         that the application does not start in an invalid or partially-initialized
         database state.
     """
-    global _client
+    global _client, _is_initialized
 
-    # Create the async MongoDB client using the application's configured URI.
-    _client = motor.motor_asyncio.AsyncIOMotorClient(settings.MONGO_URI)
+    async with _init_lock:
+        if _is_initialized and _client is not None:
+            logger.debug("Database already initialized; skipping init")
+            return
 
-    # Retrieve a reference to the configured database.
-    db_instance = _client[settings.MONGO_DB_NAME]
+        logger.info("Initializing database '%s'", settings.MONGO_DB_NAME)
 
-    # Initialize Beanie with the database instance and registered document models.
-    await init_beanie(database=db_instance, document_models=[VivaSession])
+        try:
+            # Create the async MongoDB client using the application's configured URI.
+            _client = motor.motor_asyncio.AsyncIOMotorClient(settings.MONGO_URI)
 
-    logger.info("Database '%s' initialized successfully", settings.MONGO_DB_NAME)
+            # Retrieve a reference to the configured database.
+            db_instance = _client[settings.MONGO_DB_NAME]
+
+            # Initialize Beanie with the database instance and registered document models.
+            await init_beanie(database=db_instance, document_models=[VivaSession])
+
+            _is_initialized = True
+            logger.info("Database '%s' initialized successfully", settings.MONGO_DB_NAME)
+        except Exception:
+            logger.exception(
+                "Database initialization failed for '%s'",
+                settings.MONGO_DB_NAME,
+            )
+            if _client is not None:
+                _client.close()
+            _client = None
+            _is_initialized = False
+            raise
 
 
 async def close_db() -> None:
@@ -90,12 +112,18 @@ async def close_db() -> None:
     Should be called during application shutdown to release resources cleanly.
     Safe to call multiple times or if database was never initialized.
     """
-    global _client
+    global _client, _is_initialized
 
     if _client is not None:
-        _client.close()
-        _client = None
-        logger.info("Database connection closed")
+        try:
+            _client.close()
+            logger.info("Database connection closed")
+        except Exception:
+            logger.exception("Error while closing database connection")
+            raise
+        finally:
+            _client = None
+            _is_initialized = False
 
 
 async def verify_connection() -> bool:
@@ -115,6 +143,6 @@ async def verify_connection() -> bool:
         # The 'ping' command is the lightest way to verify connectivity
         await _client.admin.command("ping")
         return True
-    except Exception as e:
-        logger.warning("Database health check failed: %s", str(e))
+    except Exception:
+        logger.exception("Database health check failed")
         return False
