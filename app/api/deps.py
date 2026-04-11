@@ -29,6 +29,7 @@ from fastapi import Depends
 from app.interfaces.llm_client import LLMClient
 from app.services.gemini_service import GeminiService
 from app.services.viva_service import VivaService
+from app.db.database import init_db
 
 # Re-export authentication dependencies for easy import in routes
 from app.core.auth import (
@@ -63,7 +64,7 @@ def get_llm_service() -> LLMClient:
 # ----------------------------------------------------------------------
 # Viva Service Provider
 # ----------------------------------------------------------------------
-def get_viva_service(
+async def get_viva_service(
     llm_service: Annotated[LLMClient, Depends(get_llm_service)],
 ) -> VivaService:
     """
@@ -81,4 +82,5 @@ def get_viva_service(
     Returns:
         VivaService: The VivaService instance fully wired with dependencies.
     """
+    await init_db()
     return VivaService(llm_client=llm_service)

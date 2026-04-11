@@ -47,10 +47,18 @@ async def lifespan(app: FastAPI):
         app (FastAPI): The FastAPI application instance.
     """
     logger.info("Application starting up...")
-    await init_db()  # Initialize the database connection and models
-    yield
-    logger.info("Application shutting down...")
-    await close_db()  # Gracefully close database connection
+    try:
+        yield
+    except Exception:
+        logger.exception("Unhandled application lifespan error")
+        raise
+    finally:
+        logger.info("Application shutting down...")
+        try:
+            await close_db()  # Gracefully close database connection
+        except Exception:
+            logger.exception("Failed to close database during shutdown")
+            raise
 
 
 # Create the main FastAPI application instance
@@ -108,6 +116,7 @@ async def health_check():
     Verifies database connectivity to provide accurate health status.
     Returns 503 Service Unavailable if database is unreachable.
     """
+    await init_db()
     db_healthy = await verify_connection()
 
     if db_healthy:
