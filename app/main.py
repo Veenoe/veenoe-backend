@@ -72,6 +72,7 @@ origins = [
     "http://localhost:8080",  # Alternative frontend port
     "https://veenoe.com",  # Production root domain
     "https://www.veenoe.com",  # Production subdomain
+    "https://app.veenoe.com",  # Production app subdomain
 ]
 
 # Add CORS middleware to allow frontend communication
