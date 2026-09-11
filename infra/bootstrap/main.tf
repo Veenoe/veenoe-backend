@@ -246,19 +246,39 @@ data "aws_iam_policy_document" "dev_app_deploy" {
   }
 
   statement {
+    sid    = "LambdaGetAdapterLayerDev"
+    effect = "Allow"
+    actions = [
+      "lambda:GetLayerVersion"
+    ]
+    resources = [
+      "arn:aws:lambda:${local.aws_region}:753240598075:layer:LambdaAdapterLayerX86:*"
+    ]
+  }
+
+  statement {
+    sid    = "LogsDescribeDev"
+    effect = "Allow"
+    actions = [
+      "logs:DescribeLogGroups"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
     sid    = "LogsManageDev"
     effect = "Allow"
     actions = [
       "logs:CreateLogGroup",
       "logs:DeleteLogGroup",
-      "logs:DescribeLogGroups",
       "logs:PutRetentionPolicy",
       "logs:DeleteRetentionPolicy",
-      "logs:ListTagsLogGroup",
-      "logs:TagLogGroup",
-      "logs:UntagLogGroup"
+      "logs:ListTagsForResource",
+      "logs:TagResource",
+      "logs:UntagResource"
     ]
     resources = [
+      "arn:aws:logs:${local.aws_region}:${local.account_id}:log-group:/aws/lambda/veenoe-dev-*",
       "arn:aws:logs:${local.aws_region}:${local.account_id}:log-group:/aws/lambda/veenoe-dev-*:*"
     ]
   }
@@ -449,19 +469,39 @@ data "aws_iam_policy_document" "prod_app_deploy" {
   }
 
   statement {
+    sid    = "LambdaGetAdapterLayerProd"
+    effect = "Allow"
+    actions = [
+      "lambda:GetLayerVersion"
+    ]
+    resources = [
+      "arn:aws:lambda:${local.aws_region}:753240598075:layer:LambdaAdapterLayerX86:*"
+    ]
+  }
+
+  statement {
+    sid    = "LogsDescribeProd"
+    effect = "Allow"
+    actions = [
+      "logs:DescribeLogGroups"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
     sid    = "LogsManageProd"
     effect = "Allow"
     actions = [
       "logs:CreateLogGroup",
       "logs:DeleteLogGroup",
-      "logs:DescribeLogGroups",
       "logs:PutRetentionPolicy",
       "logs:DeleteRetentionPolicy",
-      "logs:ListTagsLogGroup",
-      "logs:TagLogGroup",
-      "logs:UntagLogGroup"
+      "logs:ListTagsForResource",
+      "logs:TagResource",
+      "logs:UntagResource"
     ]
     resources = [
+      "arn:aws:logs:${local.aws_region}:${local.account_id}:log-group:/aws/lambda/veenoe-prod-*",
       "arn:aws:logs:${local.aws_region}:${local.account_id}:log-group:/aws/lambda/veenoe-prod-*:*"
     ]
   }
