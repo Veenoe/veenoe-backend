@@ -1,10 +1,6 @@
 name: Deploy Development
 
 on:
-  push:
-    branches:
-      # Temporary validation trigger for VEENOE-8; to be removed after proof
-      - Veenoe-8-github-ci-cd
   workflow_dispatch:
 
 concurrency:
