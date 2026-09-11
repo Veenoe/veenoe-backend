@@ -1,0 +1,31 @@
+name: Verify AWS OIDC
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - VEENOE-5-1-bootstrap-terraform-remote-state-and-git-hub-oidc
+    paths:
+      - '.github/workflows/verify-oidc.yml'
+
+jobs:
+  verify-aws-oidc:
+    name: Verify AWS Dev Deploy Role
+    runs-on: ubuntu-latest
+    environment: development
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::165835313361:role/veenoe-github-actions-dev-deploy
+          aws-region: ap-south-1
+          audience: sts.amazonaws.com
+
+      - name: Verify STS Caller Identity
+        run: |
+          echo "Verifying STS caller identity through GitHub Actions OIDC..."
+          aws sts get-caller-identity
