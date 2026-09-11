@@ -5,6 +5,11 @@ venv/
 backend/
 env/
 
+# --- Build & Packaging Artifacts ---
+dist/
+build/
+*.zip
+
 # --- Python Cache ---
 # Ignore compiled Python files and cache directories
 __pycache__/
