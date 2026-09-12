@@ -1,0 +1,199 @@
+﻿name: Deploy Production
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: veenoe-prod-deployment
+  cancel-in-progress: false
+
+jobs:
+  branch-guard:
+    name: Validate Production Branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Enforce main branch deployment policy
+        run: |
+          echo "Evaluating target branch: ${GITHUB_REF}"
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "=================================================================" >&2
+            echo "ERROR: Production deployments are strictly restricted to 'main'!" >&2
+            echo "Attempted execution from branch: ${GITHUB_REF}" >&2
+            echo "Production deployment rejected." >&2
+            echo "=================================================================" >&2
+            exit 1
+          fi
+          echo "Validation successful: Executing production deployment from 'main'."
+
+  verify:
+    name: Build and Verify Production Artifact
+    needs: branch-guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "requirements-dev.txt"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Build Lambda package artifact
+        run: |
+          python scripts/build_lambda.py
+
+      - name: Run pytest suite
+        run: |
+          pytest -v tests/
+
+      - name: Upload verified Lambda package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veenoe-backend-zip-prod
+          path: dist/veenoe-backend.zip
+          retention-days: 1
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to AWS Production
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: Production
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download verified Lambda package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: veenoe-backend-zip-prod
+          path: dist
+
+      - name: Verify artifact integrity
+        run: |
+          if [ ! -f dist/veenoe-backend.zip ]; then
+            echo "Error: dist/veenoe-backend.zip not found!" >&2
+            exit 1
+          fi
+          echo "Verified production artifact dist/veenoe-backend.zip:"
+          ls -lh dist/veenoe-backend.zip
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials via GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: arn:aws:iam::165835313361:role/veenoe-github-actions-prod-deploy
+          aws-region: ap-south-1
+          allowed-account-ids: "165835313361"
+          role-session-name: "github-actions-prod-deploy-${{ github.run_id }}"
+
+      - name: Verify assumed AWS identity
+        run: |
+          IDENTITY=$(aws sts get-caller-identity --output json)
+          ACCOUNT=$(echo "${IDENTITY}" | jq -r '.Account')
+          ARN=$(echo "${IDENTITY}" | jq -r '.Arn')
+          echo "Assumed production identity ARN: ${ARN}"
+          if [ "${ACCOUNT}" != "165835313361" ]; then
+            echo "Error: Unexpected AWS Account ID: ${ACCOUNT}" >&2
+            exit 1
+          fi
+          if [[ "${ARN}" != *"veenoe-github-actions-prod-deploy"* ]]; then
+            echo "Error: Unexpected IAM Role ARN: ${ARN}" >&2
+            exit 1
+          fi
+
+      - name: Initialize Terraform for Production application
+        run: |
+          terraform -chdir=infra/app init -input=false -backend-config=prod.backend.hcl
+
+      - name: Generate Production Terraform execution plan
+        run: |
+          terraform -chdir=infra/app plan -input=false -var-file=prod.tfvars -out=prod.tfplan
+
+      - name: Inspect plan for destructive changes (Safety Guard)
+        run: |
+          DELETIONS=$(terraform -chdir=infra/app show -json prod.tfplan | jq -c '
+            [.resource_changes[]? | select(.change.actions[] | contains("delete")) | {address: .address, actions: .change.actions}]
+          ')
+          DELETION_COUNT=$(echo "${DELETIONS}" | jq 'length')
+          if [ "${DELETION_COUNT}" -gt 0 ]; then
+            echo "ERROR: Destructive changes detected in saved plan! Automatic deletion/replacement is blocked." >&2
+            echo "${DELETIONS}" | jq -r '.[] | "  - \(.address): \(.actions | join(","))"' >&2
+            exit 1
+          fi
+          echo "Plan safety validation passed: 0 destructive changes detected."
+
+      - name: Apply saved Production Terraform plan
+        run: |
+          terraform -chdir=infra/app apply -input=false prod.tfplan
+
+      - name: Live positive smoke test (GET /)
+        run: |
+          HEALTH_URL=$(terraform -chdir=infra/app output -raw health_url)
+          echo "Smoke testing production health URL: ${HEALTH_URL}"
+          SUCCESS=false
+          for i in {1..12}; do
+            echo "Smoke test attempt ${i}/12..."
+            RESPONSE=$(curl -s -w "\n%{http_code}" "${HEALTH_URL}" || true)
+            HTTP_STATUS=$(echo "${RESPONSE}" | tail -n1)
+            BODY=$(echo "${RESPONSE}" | sed '$d')
+            if [ "${HTTP_STATUS}" = "200" ] && echo "${BODY}" | grep -q '"status":[[:space:]]*"healthy"'; then
+              echo "Smoke test passed (HTTP 200, status: healthy):"
+              echo "${BODY}"
+              SUCCESS=true
+              break
+            fi
+            echo "Attempt ${i} returned HTTP ${HTTP_STATUS}. Waiting 5 seconds..."
+            sleep 5
+          done
+          if [ "${SUCCESS}" != "true" ]; then
+            echo "ERROR: Live health check failed after 12 attempts!" >&2
+            exit 1
+          fi
+
+      - name: Route boundary negative test (GET /api/v1/viva/start)
+        run: |
+          API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
+          BOUNDARY_URL="${API_ENDPOINT}/api/v1/viva/start"
+          echo "Testing route boundary: ${BOUNDARY_URL}"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BOUNDARY_URL}")
+          if [ "${HTTP_STATUS}" != "404" ]; then
+            echo "ERROR: Expected HTTP 404 for unconfigured route, but got HTTP ${HTTP_STATUS}" >&2
+            exit 1
+          fi
+          echo "Route boundary verified: ${BOUNDARY_URL} returned HTTP 404."
+
+      - name: Verify post-apply zero-diff plan
+        run: |
+          echo "Verifying zero-diff post-apply plan..."
+          terraform -chdir=infra/app plan -input=false -var-file=prod.tfvars -detailed-exitcode -no-color
