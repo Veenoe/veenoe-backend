@@ -5,6 +5,11 @@ venv/
 backend/
 env/
 
+# --- Build & Packaging Artifacts ---
+dist/
+build/
+*.zip
+
 # --- Python Cache ---
 # Ignore compiled Python files and cache directories
 __pycache__/
@@ -46,3 +51,12 @@ desktop.ini
 # --- Testing ---
 .pytest_cache/
 .coverage
+
+# --- Terraform ---
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+.terraform.tfstate.lock.info
+!**/.terraform.lock.hcl
