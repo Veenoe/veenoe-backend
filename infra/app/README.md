@@ -70,27 +70,48 @@ All parameters reside in **AWS Systems Manager Parameter Store** under the **Sta
 
 ---
 
-## Commands
+## Workflow & Deployment Model
 
-### 1. Build the Lambda Package
-```bash
-python scripts/build_lambda.py
-```
+### 1. Local / Operator Inspection Flow (Plan Only)
+Local execution is strictly for verification, artifact generation, and plan inspection:
 
-### 2. Initialize Terraform
-```bash
-terraform -chdir=infra/app init -backend-config=dev.backend.hcl
-```
+1. **Build the Lambda Package**:
+   ```bash
+   python scripts/build_lambda.py
+   ```
+2. **Initialize Terraform**:
+   ```bash
+   terraform -chdir=infra/app init -backend-config=dev.backend.hcl
+   ```
+3. **Generate & Inspect Plan**:
+   ```bash
+   terraform -chdir=infra/app plan -var-file=dev.tfvars -out=dev.tfplan
+   ```
+4. **STOP**:
+   > [!WARNING]
+   > **Do not use local `terraform apply` for `infra/app` as a normal deployment path.**
+   > All application runtime deployments must execute exclusively through the GitHub Actions CI/CD pipeline using OIDC and temporary credentials.
 
-### 3. Plan Deployment
-```bash
-terraform -chdir=infra/app plan -var-file=dev.tfvars -out=dev.tfplan
-```
+---
 
-### 4. Apply (Only after approval)
-```bash
-terraform -chdir=infra/app apply dev.tfplan
-```
+### 2. CI/CD Deployment Flow
+Application deployments to `dev` are manual-only and executed via GitHub Actions:
+
+1. Trigger the **Deploy Development** (`deploy-dev.yml`) workflow manually (`workflow_dispatch`).
+   *(Do not reintroduce automatic deployment triggers on push or PR).*
+2. The pipeline builds and verifies the Lambda package, running the full test suite.
+3. GitHub Actions authenticates to AWS using **GitHub OIDC** assuming `veenoe-github-actions-dev-deploy` (no long-lived credentials).
+4. Terraform initializes the remote backend and generates a saved execution plan (`dev.tfplan`).
+5. A destructive-change safety guard verifies that 0 deletions or replacements exist in the plan.
+6. GitHub Actions applies the exact saved plan.
+7. Automated post-deploy smoke tests verify:
+   - Root liveness: `GET /` $\rightarrow$ 200 (healthy)
+   - Database connectivity: `GET /health` $\rightarrow$ 200 (connected)
+   - Auth rejection: `POST /api/v1/viva/start` without Authorization $\rightarrow$ 401
+   - Route boundary: `GET /api/v1/viva/start` $\rightarrow$ 404
+8. A post-apply zero-diff plan check ensures remote state perfectly matches configuration.
+
+*(Note: `infra/bootstrap` infrastructure remains manually managed out-of-band by the operator).*
 
 ---
 

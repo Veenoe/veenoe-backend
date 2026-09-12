@@ -208,8 +208,8 @@ def test_aws_mode_fails_closed_on_boto_client_error(monkeypatch):
     with patch("boto3.client", return_value=mock_ssm):
         with pytest.raises(RuntimeError) as exc_info:
             load_runtime_config()
-        assert "failed to retrieve runtime configuration" in str(exc_info.value).lower()
-        assert "accessdeniedexception" in str(exc_info.value).lower()
+        assert str(exc_info.value) == "Failed to retrieve runtime configuration from AWS SSM: ClientError"
+        assert exc_info.value.__cause__ is None
 
 
 def test_aws_mode_fails_closed_on_endpoint_error(monkeypatch):
@@ -331,3 +331,81 @@ def test_settings_integration_with_ssm(monkeypatch):
         assert custom_settings.MONGO_DB_NAME == "ssm_dev_db"
         assert custom_settings.GOOGLE_API_KEY == "ssm_google_key_999"
         assert custom_settings.CLERK_SECRET_KEY == "sk_test_ssm_clerk_key_888"
+
+
+def test_aws_error_sanitization_regression_fake_secret(monkeypatch, caplog):
+    """
+    Regression test: If AWS exception message contains a sensitive secret value,
+    verify that the secret is completely absent from:
+    - str(RuntimeError)
+    - exception __cause__ / traceback
+    - captured logs
+    """
+    from app.core.runtime_config import load_runtime_config
+
+    monkeypatch.setenv("VEENOE_SSM_PARAMETER_PREFIX", "/veenoe/dev")
+    leaked_secret = "SUPER_SECRET_MUST_NOT_LEAK"
+
+    mock_ssm = MagicMock()
+    mock_ssm.get_parameters.side_effect = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": f"Sensitive key {leaked_secret} unauthorized"}},
+        "GetParameters",
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        with patch("boto3.client", return_value=mock_ssm):
+            with pytest.raises(RuntimeError) as exc_info:
+                load_runtime_config()
+
+    # 1. Secret must not appear in str(RuntimeError)
+    assert leaked_secret not in str(exc_info.value)
+    assert str(exc_info.value) == "Failed to retrieve runtime configuration from AWS SSM: ClientError"
+
+    # 2. Secret must not appear in __cause__ (suppressed via from None)
+    assert exc_info.value.__cause__ is None
+
+    # 3. Secret must not appear in captured logs
+    for record in caplog.records:
+        assert leaked_secret not in record.getMessage()
+
+
+def test_settings_integration_ssm_overrides_stale_environment(monkeypatch):
+    """
+    Prove that SSM parameter values take precedence over stale ambient environment
+    variables when in AWS mode (VEENOE_SSM_PARAMETER_PREFIX is set).
+    """
+    from app.core.config import Settings
+
+    monkeypatch.setenv("VEENOE_SSM_PARAMETER_PREFIX", "/veenoe/dev")
+
+    # Set stale environment values
+    monkeypatch.setenv("MONGO_URI", "mongodb://stale-host:27017")
+    monkeypatch.setenv("MONGO_DB_NAME", "stale_db")
+    monkeypatch.setenv("GOOGLE_API_KEY", "stale_google_key_old")
+    monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_stale_clerk_key_old")
+
+    # Mock SSM returning FRESH, real values
+    mock_ssm = MagicMock()
+    mock_ssm.get_parameters.return_value = {
+        "Parameters": [
+            {"Name": "/veenoe/dev/mongo_uri", "Value": "mongodb+srv://fresh-user:fresh-pw@fresh.mongodb.net"},
+            {"Name": "/veenoe/dev/mongo_db_name", "Value": "fresh_viva_db"},
+            {"Name": "/veenoe/dev/google_api_key", "Value": "fresh_google_key_active"},
+            {"Name": "/veenoe/dev/clerk_secret_key", "Value": "sk_test_fresh_clerk_key_active"},
+        ],
+        "InvalidParameters": [],
+    }
+
+    with patch("boto3.client", return_value=mock_ssm):
+        custom_settings = Settings()
+
+        # Assert all four values equal the SSM values, NOT the stale environment values
+        assert custom_settings.MONGO_URI == "mongodb+srv://fresh-user:fresh-pw@fresh.mongodb.net"
+        assert custom_settings.MONGO_DB_NAME == "fresh_viva_db"
+        assert custom_settings.GOOGLE_API_KEY == "fresh_google_key_active"
+        assert custom_settings.CLERK_SECRET_KEY == "sk_test_fresh_clerk_key_active"
+
+        assert custom_settings.MONGO_URI != "mongodb://stale-host:27017"
+        assert custom_settings.MONGO_DB_NAME != "stale_db"
+        assert custom_settings.GOOGLE_API_KEY != "stale_google_key_old"
+        assert custom_settings.CLERK_SECRET_KEY != "sk_test_stale_clerk_key_old"

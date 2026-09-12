@@ -103,8 +103,8 @@ def load_runtime_config() -> Dict[str, str]:
             type(e).__name__,
         )
         raise RuntimeError(
-            f"Failed to retrieve runtime configuration from AWS SSM: {type(e).__name__}: {str(e)}"
-        ) from e
+            f"Failed to retrieve runtime configuration from AWS SSM: {type(e).__name__}"
+        ) from None
     except Exception as e:
         logger.error(
             "Unexpected error during AWS SSM configuration load: %s",
@@ -112,7 +112,7 @@ def load_runtime_config() -> Dict[str, str]:
         )
         raise RuntimeError(
             f"Failed to retrieve runtime configuration from AWS SSM: {type(e).__name__}"
-        ) from e
+        ) from None
 
     # Check for invalid parameters reported by SSM
     invalid_params = response.get("InvalidParameters", [])
