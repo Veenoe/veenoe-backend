@@ -37,3 +37,8 @@ output "health_url" {
   description = "Public URL for the smoke test health check endpoint (GET /)."
   value       = "${aws_apigatewayv2_api.http_api.api_endpoint}/"
 }
+
+output "db_health_url" {
+  description = "Public URL for the database health check endpoint (GET /health)."
+  value       = "${aws_apigatewayv2_api.http_api.api_endpoint}/health"
+}

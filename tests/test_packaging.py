@@ -107,8 +107,19 @@ def test_lambda_zip_application_code_present():
         names = set(zf.namelist())
         assert "app/main.py" in names
         assert "app/core/config.py" in names
+        assert "app/core/runtime_config.py" in names
         assert "app/api/api.py" in names
         assert "app/db/database.py" in names
+
+
+def test_lambda_zip_boto3_present():
+    """Verify pinned boto3 and botocore packages are packaged in the ZIP."""
+    with zipfile.ZipFile(DIST_ZIP, "r") as zf:
+        names = zf.namelist()
+        boto3_entries = [n for n in names if n.startswith("boto3/")]
+        botocore_entries = [n for n in names if n.startswith("botocore/")]
+        assert len(boto3_entries) > 0, "boto3 package not found in ZIP"
+        assert len(botocore_entries) > 0, "botocore package not found in ZIP"
 
 
 def test_lambda_zip_contains_linux_binaries():

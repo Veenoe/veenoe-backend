@@ -39,33 +39,3 @@ variable "lambda_artifact_path" {
   description = "Relative path to the Lambda ZIP artifact from the Terraform root module."
   default     = "../../dist/veenoe-backend.zip"
 }
-
-# --- Application Configuration Placeholders for Smoke Testing ---
-# These non-sensitive placeholder values allow the FastAPI application to import and start
-# without contacting external systems, enabling the VEENOE-7 smoke test (GET /).
-# In production / full-service wiring, these will be populated from Secrets Manager / SSM.
-variable "smoke_mongo_uri" {
-  type        = string
-  description = "Placeholder MongoDB URI for smoke test startup."
-  default     = "mongodb://localhost:27017"
-}
-
-variable "smoke_mongo_db_name" {
-  type        = string
-  description = "Placeholder MongoDB DB name for smoke test startup."
-  default     = "test_viva_db"
-}
-
-variable "smoke_google_api_key" {
-  type        = string
-  description = "Placeholder Google API Key for smoke test startup."
-  default     = "test_google_api_key"
-  sensitive   = true
-}
-
-variable "smoke_clerk_secret_key" {
-  type        = string
-  description = "Placeholder Clerk Secret Key for smoke test startup."
-  default     = "sk_test_mock_clerk_secret_key"
-  sensitive   = true
-}

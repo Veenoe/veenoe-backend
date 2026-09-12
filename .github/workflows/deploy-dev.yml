@@ -160,6 +160,37 @@ jobs:
             exit 1
           fi
 
+      - name: Live database connectivity test (GET /health)
+        run: |
+          API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
+          DB_HEALTH_URL="${API_ENDPOINT}/health"
+          echo "Smoke testing database health URL: ${DB_HEALTH_URL}"
+          RESPONSE=$(curl -s -w "\n%{http_code}" "${DB_HEALTH_URL}" || true)
+          HTTP_STATUS=$(echo "${RESPONSE}" | tail -n1)
+          BODY=$(echo "${RESPONSE}" | sed '$d')
+          echo "GET /health returned HTTP ${HTTP_STATUS}: ${BODY}"
+          if [ "${HTTP_STATUS}" != "200" ] || ! echo "${BODY}" | grep -q '"database":[[:space:]]*"connected"'; then
+            echo "ERROR: Expected HTTP 200 with database: connected from GET /health!" >&2
+            exit 1
+          fi
+          echo "Database health test passed (HTTP 200, database: connected)."
+
+      - name: Authentication negative test (POST /api/v1/viva/start without Authorization)
+        run: |
+          API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
+          START_URL="${API_ENDPOINT}/api/v1/viva/start"
+          echo "Testing unauthenticated POST: ${START_URL}"
+          PAYLOAD='{"student_name":"Smoke Test Student","topic":"General Knowledge","class_level":"10","session_type":"viva","voice_name":"Kore"}'
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${START_URL}" -H "Content-Type: application/json" -d "${PAYLOAD}" || true)
+          HTTP_STATUS=$(echo "${RESPONSE}" | tail -n1)
+          BODY=$(echo "${RESPONSE}" | sed '$d')
+          echo "POST /api/v1/viva/start without auth returned HTTP ${HTTP_STATUS}: ${BODY}"
+          if [ "${HTTP_STATUS}" != "401" ]; then
+            echo "ERROR: Expected HTTP 401 Unauthorized for unauthenticated POST, but got HTTP ${HTTP_STATUS}!" >&2
+            exit 1
+          fi
+          echo "Authentication negative test passed: POST returned HTTP 401."
+
       - name: Route boundary negative test (GET /api/v1/viva/start)
         run: |
           API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
