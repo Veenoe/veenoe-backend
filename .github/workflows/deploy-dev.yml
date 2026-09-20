@@ -128,16 +128,6 @@ jobs:
         run: |
           terraform -chdir=infra/app validate
 
-      - name: Untaint recovering SSM parameters
-        run: |
-          for param in \
-            'aws_ssm_parameter.mongo_uri[0]' \
-            'aws_ssm_parameter.mongo_db_name[0]' \
-            'aws_ssm_parameter.google_api_key[0]' \
-            'aws_ssm_parameter.clerk_secret_key[0]'; do
-            terraform -chdir=infra/app untaint -allow-missing "${param}" || true
-          done
-
       - name: Generate DEV Terraform execution plan
         run: |
           terraform -chdir=infra/app plan -input=false -var-file=dev.tfvars -out=dev.tfplan
