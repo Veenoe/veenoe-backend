@@ -61,6 +61,26 @@ data "aws_iam_policy_document" "lambda_logging" {
   }
 }
 
+resource "aws_iam_role_policy" "lambda_ssm_read" {
+  name   = "${local.name_prefix}-lambda-ssm-read"
+  role   = aws_iam_role.lambda_runtime.id
+  policy = data.aws_iam_policy_document.lambda_ssm_read.json
+}
+
+data "aws_iam_policy_document" "lambda_ssm_read" {
+  statement {
+    sid     = "SSMGetParametersExact"
+    effect  = "Allow"
+    actions = ["ssm:GetParameters"]
+    resources = [
+      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/${var.environment}/mongo_uri",
+      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/${var.environment}/mongo_db_name",
+      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/${var.environment}/google_api_key",
+      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/${var.environment}/clerk_secret_key"
+    ]
+  }
+}
+
 # ==============================================================================
 # Lambda Function with Lambda Web Adapter
 # ==============================================================================
@@ -91,17 +111,15 @@ resource "aws_lambda_function" "backend" {
       AWS_LWA_READINESS_CHECK_HEALTHY_STATUS = "200-399"
       AWS_LWA_INVOKE_MODE                    = "buffered"
 
-      # Application configuration (smoke test placeholders)
-      MONGO_URI        = var.smoke_mongo_uri
-      MONGO_DB_NAME    = var.smoke_mongo_db_name
-      GOOGLE_API_KEY   = var.smoke_google_api_key
-      CLERK_SECRET_KEY = var.smoke_clerk_secret_key
+      # Application runtime configuration pointer (SSM Parameter Store)
+      VEENOE_SSM_PARAMETER_PREFIX = "/veenoe/${var.environment}"
     }
   }
 
   depends_on = [
     aws_cloudwatch_log_group.lambda,
-    aws_iam_role_policy.lambda_logging
+    aws_iam_role_policy.lambda_logging,
+    aws_iam_role_policy.lambda_ssm_read
   ]
 }
 
@@ -127,6 +145,20 @@ resource "aws_apigatewayv2_integration" "lambda" {
 resource "aws_apigatewayv2_route" "root" {
   api_id    = aws_apigatewayv2_api.http_api.id
   route_key = "GET /"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+# Production database connectivity health check route: GET /health
+resource "aws_apigatewayv2_route" "health" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "GET /health"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+# Authenticated viva session start route: POST /api/v1/viva/start
+resource "aws_apigatewayv2_route" "viva_start" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "POST /api/v1/viva/start"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 

@@ -14,6 +14,8 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 
+from app.core.runtime_config import load_runtime_config
+
 
 class Settings(BaseSettings):
     """
@@ -52,6 +54,11 @@ class Settings(BaseSettings):
 
     # Configure the settings to load from a .env file
     model_config = SettingsConfigDict(env_file=".env")
+
+    def __init__(self, **values):
+        runtime_config = load_runtime_config()
+        merged = {**runtime_config, **values}
+        super().__init__(**merged)
 
 
 # Create a single, reusable instance of the settings
