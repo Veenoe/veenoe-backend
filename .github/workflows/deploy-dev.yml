@@ -2,6 +2,15 @@ name: Deploy Development
 
 on:
   workflow_dispatch:
+    inputs:
+      operation:
+        description: "Deployment operation to perform"
+        required: true
+        type: choice
+        default: "full-deploy"
+        options:
+          - full-deploy
+          - bootstrap-ssm
 
 concurrency:
   group: veenoe-dev-deployment
@@ -115,11 +124,113 @@ jobs:
         run: |
           terraform -chdir=infra/app init -input=false -backend-config=dev.backend.hcl
 
+      # ========================================================================
+      # BOOTSTRAP-SSM MODE STEPS
+      # ========================================================================
+      - name: Generate targeted SSM Terraform execution plan
+        if: ${{ github.event.inputs.operation == 'bootstrap-ssm' }}
+        run: |
+          terraform -chdir=infra/app plan -input=false -var-file=dev.tfvars \
+            -target="aws_ssm_parameter.mongo_uri[0]" \
+            -target="aws_ssm_parameter.mongo_db_name[0]" \
+            -target="aws_ssm_parameter.google_api_key[0]" \
+            -target="aws_ssm_parameter.clerk_secret_key[0]" \
+            -out=dev.tfplan
+
+      - name: Inspect targeted SSM plan (Safety Guard)
+        if: ${{ github.event.inputs.operation == 'bootstrap-ssm' }}
+        run: |
+          PLAN_JSON=$(terraform -chdir=infra/app show -json dev.tfplan)
+
+          EXPECTED_TARGETS='[
+            "aws_ssm_parameter.mongo_uri[0]",
+            "aws_ssm_parameter.mongo_db_name[0]",
+            "aws_ssm_parameter.google_api_key[0]",
+            "aws_ssm_parameter.clerk_secret_key[0]"
+          ]'
+
+          # Extract all active resource changes (excluding no-op and read)
+          ACTIVE_CHANGES=$(echo "${PLAN_JSON}" | jq -c '
+            [.resource_changes[]? | select(.change.actions != ["no-op"] and .change.actions != ["read"])]
+          ')
+
+          echo "Active resource changes in targeted plan:"
+          echo "${ACTIVE_CHANGES}" | jq -r '.[] | "  - \(.address): \(.change.actions | join(","))"'
+
+          TOTAL_CHANGES=$(echo "${ACTIVE_CHANGES}" | jq 'length')
+          CREATE_COUNT=$(echo "${ACTIVE_CHANGES}" | jq '[.[] | select(.change.actions == ["create"])] | length')
+          UPDATE_COUNT=$(echo "${ACTIVE_CHANGES}" | jq '[.[] | select(.change.actions == ["update"])] | length')
+          DELETE_COUNT=$(echo "${ACTIVE_CHANGES}" | jq '[.[] | select(.change.actions[] | contains("delete"))] | length')
+
+          # Verify no unexpected resources exist in the active changes
+          UNEXPECTED_CHANGES=$(echo "${ACTIVE_CHANGES}" | jq -c --argjson expected "${EXPECTED_TARGETS}" '
+            [.[] | select(.address as $addr | ($expected | index($addr)) == null)]
+          ')
+          UNEXPECTED_COUNT=$(echo "${UNEXPECTED_CHANGES}" | jq 'length')
+
+          echo "Targeted plan inspection:"
+          echo "  Total active changes: ${TOTAL_CHANGES}"
+          echo "  Create actions: ${CREATE_COUNT} (expected: 4)"
+          echo "  Update actions: ${UPDATE_COUNT} (expected: 0)"
+          echo "  Delete/Replace actions: ${DELETE_COUNT} (expected: 0)"
+          echo "  Unexpected resource changes: ${UNEXPECTED_COUNT} (expected: 0)"
+
+          if [ "${CREATE_COUNT}" -ne 4 ] || [ "${UPDATE_COUNT}" -ne 0 ] || [ "${DELETE_COUNT}" -ne 0 ] || [ "${TOTAL_CHANGES}" -ne 4 ] || [ "${UNEXPECTED_COUNT}" -ne 0 ]; then
+            echo "ERROR: Targeted plan does not match strict expectation (expected exactly 4 create, 0 update, 0 delete, 0 replace)!" >&2
+            if [ "${UNEXPECTED_COUNT}" -gt 0 ]; then
+              echo "Unexpected resources detected in plan:" >&2
+              echo "${UNEXPECTED_CHANGES}" | jq -r '.[] | "  - \(.address): \(.change.actions | join(","))"' >&2
+            fi
+            exit 1
+          fi
+
+          echo "Targeted SSM plan safety validation passed: exactly 4 create, 0 update, 0 delete, 0 replace."
+
+      - name: Apply saved targeted SSM Terraform plan
+        if: ${{ github.event.inputs.operation == 'bootstrap-ssm' }}
+        run: |
+          terraform -chdir=infra/app apply -input=false dev.tfplan
+
+      - name: Verify SSM parameter metadata via AWS CLI
+        if: ${{ github.event.inputs.operation == 'bootstrap-ssm' }}
+        run: |
+          EXPECTED_PARAMS=(
+            "/veenoe/dev/mongo_uri"
+            "/veenoe/dev/mongo_db_name"
+            "/veenoe/dev/google_api_key"
+            "/veenoe/dev/clerk_secret_key"
+          )
+
+          echo "Verifying SSM parameters exist in AWS Parameter Store (metadata only, no values)..."
+          EXISTING_NAMES=$(aws ssm describe-parameters \
+            --parameter-filters "Key=Name,Option=BeginsWith,Values=/veenoe/dev/" \
+            --query "Parameters[*].Name" \
+            --output json)
+
+          echo "Parameters found under /veenoe/dev/ namespace:"
+          echo "${EXISTING_NAMES}" | jq -r '.[]'
+
+          for param in "${EXPECTED_PARAMS[@]}"; do
+            FOUND=$(echo "${EXISTING_NAMES}" | jq --arg p "${param}" 'index($p)')
+            if [ "${FOUND}" = "null" ]; then
+              echo "ERROR: Expected SSM parameter name not found in Parameter Store: ${param}" >&2
+              exit 1
+            fi
+            echo "Verified parameter name exists: ${param}"
+          done
+
+          echo "All 4 required DEV SSM parameter names verified successfully in AWS Parameter Store."
+
+      # ========================================================================
+      # FULL-DEPLOY MODE STEPS
+      # ========================================================================
       - name: Generate DEV Terraform execution plan
+        if: ${{ github.event.inputs.operation == 'full-deploy' || !github.event.inputs.operation }}
         run: |
           terraform -chdir=infra/app plan -input=false -var-file=dev.tfvars -out=dev.tfplan
 
       - name: Inspect plan for destructive changes (Safety Guard)
+        if: ${{ github.event.inputs.operation == 'full-deploy' || !github.event.inputs.operation }}
         run: |
           DELETIONS=$(terraform -chdir=infra/app show -json dev.tfplan | jq -c '
             [.resource_changes[]? | select(.change.actions[] | contains("delete")) | {address: .address, actions: .change.actions}]
@@ -133,10 +244,12 @@ jobs:
           echo "Plan safety validation passed: 0 destructive changes detected."
 
       - name: Apply saved DEV Terraform plan
+        if: ${{ github.event.inputs.operation == 'full-deploy' || !github.event.inputs.operation }}
         run: |
           terraform -chdir=infra/app apply -input=false dev.tfplan
 
       - name: Live positive smoke test (GET /)
+        if: ${{ github.event.inputs.operation == 'full-deploy' || !github.event.inputs.operation }}
         run: |
           HEALTH_URL=$(terraform -chdir=infra/app output -raw health_url)
           echo "Smoke testing health URL: ${HEALTH_URL}"
@@ -161,6 +274,7 @@ jobs:
           fi
 
       - name: Live database connectivity test (GET /health)
+        if: ${{ github.event.inputs.operation == 'full-deploy' || !github.event.inputs.operation }}
         run: |
           API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
           DB_HEALTH_URL="${API_ENDPOINT}/health"
@@ -176,6 +290,7 @@ jobs:
           echo "Database health test passed (HTTP 200, database: connected)."
 
       - name: Authentication negative test (POST /api/v1/viva/start without Authorization)
+        if: ${{ github.event.inputs.operation == 'full-deploy' || !github.event.inputs.operation }}
         run: |
           API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
           START_URL="${API_ENDPOINT}/api/v1/viva/start"
@@ -192,6 +307,7 @@ jobs:
           echo "Authentication negative test passed: POST returned HTTP 401."
 
       - name: Route boundary negative test (GET /api/v1/viva/start)
+        if: ${{ github.event.inputs.operation == 'full-deploy' || !github.event.inputs.operation }}
         run: |
           API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
           BOUNDARY_URL="${API_ENDPOINT}/api/v1/viva/start"
@@ -204,6 +320,7 @@ jobs:
           echo "Route boundary verified: ${BOUNDARY_URL} returned HTTP 404."
 
       - name: Verify post-apply zero-diff plan
+        if: ${{ github.event.inputs.operation == 'full-deploy' || !github.event.inputs.operation }}
         run: |
           echo "Verifying zero-diff post-apply plan..."
           terraform -chdir=infra/app plan -input=false -var-file=dev.tfvars -detailed-exitcode -no-color
