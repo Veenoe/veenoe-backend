@@ -3,6 +3,10 @@ locals {
   function_name = "${local.name_prefix}-backend"
   account_id    = data.aws_caller_identity.current.account_id
   aws_region    = data.aws_region.current.name
+
+  # Environment-aware custom domain resolution
+  custom_domain_enabled = var.enable_custom_domain
+  custom_domain_name    = var.custom_domain_name != "" ? var.custom_domain_name : (var.environment == "prod" ? "api.veenoe.com" : "api-dev.veenoe.com")
 }
 
 data "aws_caller_identity" "current" {}
@@ -182,4 +186,33 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = aws_lambda_function.backend.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+}
+
+# ==============================================================================
+# API Gateway Custom Domain & API Mapping (Environment-Safe)
+# ==============================================================================
+
+data "aws_acm_certificate" "api" {
+  count       = local.custom_domain_enabled ? 1 : 0
+  domain      = local.custom_domain_name
+  statuses    = ["ISSUED"]
+  most_recent = true
+}
+
+resource "aws_apigatewayv2_domain_name" "api" {
+  count       = local.custom_domain_enabled ? 1 : 0
+  domain_name = local.custom_domain_name
+
+  domain_name_configuration {
+    certificate_arn = data.aws_acm_certificate.api[0].arn
+    endpoint_type   = "REGIONAL"
+    security_policy = "TLS_1_2"
+  }
+}
+
+resource "aws_apigatewayv2_api_mapping" "api" {
+  count       = local.custom_domain_enabled ? 1 : 0
+  api_id      = aws_apigatewayv2_api.http_api.id
+  domain_name = aws_apigatewayv2_domain_name.api[0].id
+  stage       = aws_apigatewayv2_stage.default.id
 }
