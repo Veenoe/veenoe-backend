@@ -242,10 +242,10 @@ jobs:
           fi
           echo "Route boundary 404 verified: ${NONEXISTENT_URL} returned HTTP 404."
 
-          # Unconfigured method on POST-only route returns HTTP 405
-          METHOD_URL="${API_ENDPOINT}/api/v1/viva/start"
-          echo "Testing unconfigured GET method on POST route: ${METHOD_URL}"
-          STATUS_405=$(curl -s -o /dev/null -w "%{http_code}" "${METHOD_URL}")
+          # Unconfigured method on GET-only route returns HTTP 405
+          METHOD_URL="${API_ENDPOINT}/api/v1/viva/history"
+          echo "Testing unconfigured POST method on GET route: ${METHOD_URL}"
+          STATUS_405=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${METHOD_URL}")
           if [ "${STATUS_405}" != "405" ]; then
             echo "ERROR: Expected HTTP 405 for unconfigured method, but got HTTP ${STATUS_405}" >&2
             exit 1
