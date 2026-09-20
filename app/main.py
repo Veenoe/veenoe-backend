@@ -83,10 +83,20 @@ origins = [
     "https://app.veenoe.com",  # Production app subdomain
 ]
 
+if settings.FRONTEND_URL and settings.FRONTEND_URL not in origins:
+    origins.append(settings.FRONTEND_URL)
+
+if settings.CORS_ORIGINS:
+    for extra_origin in settings.CORS_ORIGINS.split(","):
+        extra_origin = extra_origin.strip()
+        if extra_origin and extra_origin not in origins:
+            origins.append(extra_origin)
+
 # Add CORS middleware to allow frontend communication
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

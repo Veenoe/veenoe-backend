@@ -227,18 +227,61 @@ jobs:
           fi
           echo "Authentication negative test passed: POST returned HTTP 401."
 
-      - name: Route boundary negative test (GET /api/v1/viva/start)
+      - name: Route boundary negative tests (unconfigured path and method)
         if: ${{ github.event.inputs.operation == 'APPLY' }}
         run: |
           API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
-          BOUNDARY_URL="${API_ENDPOINT}/api/v1/viva/start"
-          echo "Testing route boundary: ${BOUNDARY_URL}"
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BOUNDARY_URL}")
-          if [ "${HTTP_STATUS}" != "404" ]; then
-            echo "ERROR: Expected HTTP 404 for unconfigured route, but got HTTP ${HTTP_STATUS}" >&2
+
+          # Non-existent path returns HTTP 404
+          NONEXISTENT_URL="${API_ENDPOINT}/api/v1/nonexistent-boundary-check"
+          echo "Testing non-existent route: ${NONEXISTENT_URL}"
+          STATUS_404=$(curl -s -o /dev/null -w "%{http_code}" "${NONEXISTENT_URL}")
+          if [ "${STATUS_404}" != "404" ]; then
+            echo "ERROR: Expected HTTP 404 for non-existent route, but got HTTP ${STATUS_404}" >&2
             exit 1
           fi
-          echo "Route boundary verified: ${BOUNDARY_URL} returned HTTP 404."
+          echo "Route boundary 404 verified: ${NONEXISTENT_URL} returned HTTP 404."
+
+          # Unconfigured method on POST-only route returns HTTP 405
+          METHOD_URL="${API_ENDPOINT}/api/v1/viva/start"
+          echo "Testing unconfigured GET method on POST route: ${METHOD_URL}"
+          STATUS_405=$(curl -s -o /dev/null -w "%{http_code}" "${METHOD_URL}")
+          if [ "${STATUS_405}" != "405" ]; then
+            echo "ERROR: Expected HTTP 405 for unconfigured method, but got HTTP ${STATUS_405}" >&2
+            exit 1
+          fi
+          echo "Method boundary 405 verified: ${METHOD_URL} returned HTTP 405."
+
+      - name: History route connectivity test (GET /api/v1/viva/history without auth)
+        if: ${{ github.event.inputs.operation == 'APPLY' }}
+        run: |
+          API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
+          HISTORY_URL="${API_ENDPOINT}/api/v1/viva/history"
+          echo "Testing history endpoint: ${HISTORY_URL}"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${HISTORY_URL}")
+          echo "GET /api/v1/viva/history returned HTTP ${HTTP_STATUS}"
+          if [ "${HTTP_STATUS}" != "401" ]; then
+            echo "ERROR: Expected HTTP 401 Unauthorized for unauthenticated GET /api/v1/viva/history, but got HTTP ${HTTP_STATUS}" >&2
+            exit 1
+          fi
+          echo "History endpoint verified: returned HTTP 401."
+
+      - name: CORS preflight smoke test (OPTIONS /api/v1/viva/start from app.veenoe.com)
+        if: ${{ github.event.inputs.operation == 'APPLY' }}
+        run: |
+          API_ENDPOINT=$(terraform -chdir=infra/app output -raw api_endpoint)
+          START_URL="${API_ENDPOINT}/api/v1/viva/start"
+          echo "Testing CORS preflight on: ${START_URL}"
+          RESPONSE=$(curl -s -i -X OPTIONS "${START_URL}" \
+            -H "Origin: https://app.veenoe.com" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: authorization,content-type")
+          echo "${RESPONSE}"
+          if ! echo "${RESPONSE}" | grep -qi "access-control-allow-origin: https://app.veenoe.com"; then
+            echo "ERROR: Missing Access-Control-Allow-Origin header for https://app.veenoe.com!" >&2
+            exit 1
+          fi
+          echo "CORS preflight test passed."
 
       - name: Verify post-apply zero-diff plan
         if: ${{ github.event.inputs.operation == 'APPLY' }}
