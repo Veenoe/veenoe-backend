@@ -39,3 +39,15 @@ variable "lambda_artifact_path" {
   description = "Relative path to the Lambda ZIP artifact from the Terraform root module."
   default     = "../../dist/veenoe-backend.zip"
 }
+
+variable "enable_custom_domain" {
+  type        = bool
+  description = "Whether to configure a custom domain name for API Gateway."
+  default     = false
+}
+
+variable "custom_domain_name" {
+  type        = string
+  description = "Custom domain name override. If blank, defaults to api-dev.veenoe.com for dev and api.veenoe.com for prod."
+  default     = ""
+}

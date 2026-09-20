@@ -41,13 +41,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Run unit test suite
+        run: |
+          pytest -v tests/test_runtime_config.py
+
       - name: Build Lambda package artifact
         run: |
           python scripts/build_lambda.py
 
-      - name: Run pytest suite
+      - name: Run packaging & artifact verification tests
         run: |
-          pytest -v tests/
+          pytest -v tests/test_packaging.py
 
       - name: Upload verified Lambda package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -242,6 +246,23 @@ jobs:
             exit 1
           fi
           echo "CORS preflight test passed."
+
+      - name: Live custom domain health check (if configured)
+        if: ${{ github.event.inputs.operation == 'APPLY' }}
+        run: |
+          CUSTOM_URL=$(terraform -chdir=infra/app output -raw custom_domain_url 2>/dev/null || echo "")
+          if [ -n "${CUSTOM_URL}" ] && [ "${CUSTOM_URL}" != "null" ]; then
+            echo "Testing custom domain: ${CUSTOM_URL}/health"
+            RESPONSE=$(curl -s -w "\n%{http_code}" "${CUSTOM_URL}/health" || true)
+            HTTP_STATUS=$(echo "${RESPONSE}" | tail -n1)
+            BODY=$(echo "${RESPONSE}" | sed '$d')
+            echo "GET ${CUSTOM_URL}/health returned HTTP ${HTTP_STATUS}: ${BODY}"
+            if [ "${HTTP_STATUS}" != "200" ]; then
+              echo "WARNING: Custom domain health check returned HTTP ${HTTP_STATUS} (DNS may still be propagating)." >&2
+            else
+              echo "Custom domain verified successfully."
+            fi
+          fi
 
       - name: Verify post-apply zero-diff plan
         if: ${{ github.event.inputs.operation == 'APPLY' }}

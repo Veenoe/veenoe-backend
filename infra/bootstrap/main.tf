@@ -226,8 +226,21 @@ data "aws_iam_policy_document" "dev_app_deploy" {
     resources = [
       "arn:aws:apigateway:${local.aws_region}::/apis",
       "arn:aws:apigateway:${local.aws_region}::/apis/*",
+      "arn:aws:apigateway:${local.aws_region}::/domainnames",
+      "arn:aws:apigateway:${local.aws_region}::/domainnames/*",
       "arn:aws:apigateway:${local.aws_region}::/tags/*"
     ]
+  }
+
+  statement {
+    sid    = "ACMDescribeCertificatesDev"
+    effect = "Allow"
+    actions = [
+      "acm:DescribeCertificate",
+      "acm:ListCertificates",
+      "acm:GetCertificate"
+    ]
+    resources = ["*"]
   }
 
   statement {
@@ -480,8 +493,21 @@ data "aws_iam_policy_document" "prod_app_deploy" {
     resources = [
       "arn:aws:apigateway:${local.aws_region}::/apis",
       "arn:aws:apigateway:${local.aws_region}::/apis/*",
+      "arn:aws:apigateway:${local.aws_region}::/domainnames",
+      "arn:aws:apigateway:${local.aws_region}::/domainnames/*",
       "arn:aws:apigateway:${local.aws_region}::/tags/*"
     ]
+  }
+
+  statement {
+    sid    = "ACMDescribeCertificatesProd"
+    effect = "Allow"
+    actions = [
+      "acm:DescribeCertificate",
+      "acm:ListCertificates",
+      "acm:GetCertificate"
+    ]
+    resources = ["*"]
   }
 
   statement {
