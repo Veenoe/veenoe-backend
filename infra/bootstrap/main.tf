@@ -323,6 +323,26 @@ data "aws_iam_policy_document" "dev_app_deploy" {
       values   = ["lambda.amazonaws.com"]
     }
   }
+
+  statement {
+    sid    = "SSMManageParametersDev"
+    effect = "Allow"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:PutParameter",
+      "ssm:DeleteParameter",
+      "ssm:AddTagsToResource",
+      "ssm:RemoveTagsFromResource",
+      "ssm:ListTagsForResource"
+    ]
+    resources = [
+      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/dev/mongo_uri",
+      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/dev/mongo_db_name",
+      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/dev/google_api_key",
+      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/dev/clerk_secret_key"
+    ]
+  }
 }
 
 # ==============================================================================
