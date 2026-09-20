@@ -60,6 +60,42 @@ def test_root_health_endpoint():
     assert "message" in data
 
 
+def test_cors_preflight_production_frontend():
+    """Verify CORS preflight returns 200 with Access-Control-Allow-Origin for production frontend."""
+    from app.main import app
+
+    client = TestClient(app)
+    response = client.options(
+        "/api/v1/viva/start",
+        headers={
+            "Origin": "https://app.veenoe.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "https://app.veenoe.com"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_cors_preflight_vercel_preview():
+    """Verify CORS preflight returns 200 with Access-Control-Allow-Origin for Vercel preview domains."""
+    from app.main import app
+
+    client = TestClient(app)
+    response = client.options(
+        "/api/v1/viva/history",
+        headers={
+            "Origin": "https://veenoe-web-preview-123.vercel.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "https://veenoe-web-preview-123.vercel.app"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+
+
 def test_lambda_zip_exists_and_size_limits():
     """Verify Lambda ZIP artifact exists and is within AWS Lambda size limits."""
     assert (
