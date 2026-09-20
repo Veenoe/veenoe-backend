@@ -238,7 +238,8 @@ data "aws_iam_policy_document" "dev_app_deploy" {
     actions = [
       "acm:DescribeCertificate",
       "acm:ListCertificates",
-      "acm:GetCertificate"
+      "acm:GetCertificate",
+      "acm:ListTagsForCertificate"
     ]
     resources = ["*"]
   }
@@ -505,7 +506,8 @@ data "aws_iam_policy_document" "prod_app_deploy" {
     actions = [
       "acm:DescribeCertificate",
       "acm:ListCertificates",
-      "acm:GetCertificate"
+      "acm:GetCertificate",
+      "acm:ListTagsForCertificate"
     ]
     resources = ["*"]
   }
