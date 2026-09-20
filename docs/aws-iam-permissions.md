@@ -129,6 +129,11 @@ Permissions are grouped by resource type and strictly scoped to `dev` resources:
     - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/mongo_db_name`
     - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/google_api_key`
     - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/clerk_secret_key`
+- **SSM Parameter Metadata Discovery**:
+  - Statement ID: `SSMDescribeParametersDev`
+  - Action: `ssm:DescribeParameters`
+  - Resource: `*`
+  - Rationale: Required by the Terraform AWS provider to inspect parameter existence, data types, and tiers during deployment. In AWS IAM, `DescribeParameters` is an account-level discovery action that does not support resource-level ARN constraints.
 
 ### C. Explicit Deploy Role Prohibitions & Exclusions
 The `veenoe-github-actions-dev-deploy` role **DOES NOT** receive and must never be granted:

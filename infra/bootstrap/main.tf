@@ -343,6 +343,15 @@ data "aws_iam_policy_document" "dev_app_deploy" {
       "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/dev/clerk_secret_key"
     ]
   }
+
+  statement {
+    sid    = "SSMDescribeParametersDev"
+    effect = "Allow"
+    actions = [
+      "ssm:DescribeParameters"
+    ]
+    resources = ["*"]
+  }
 }
 
 # ==============================================================================
