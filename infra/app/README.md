@@ -29,21 +29,26 @@ This Terraform root module provisions the AWS serverless application runtime for
 ## Runtime Configuration & Secrets Architecture (VEENOE-9)
 
 ### 1. Separation of Concerns & State Security
-- **Real secrets never enter Terraform**: No secret values exist in `.tf`, `.tfvars`, Terraform state (`.tfstate`), Git, or CI logs.
-- **Out-of-Band Population**: Parameters in AWS Systems Manager (SSM) Parameter Store are populated manually by the operator.
-- **Terraform Scope**: Terraform provisions only the non-sensitive Lambda pointer (`VEENOE_SSM_PARAMETER_PREFIX = "/veenoe/${var.environment}"`) and the least-privilege IAM policy.
+- **DEV-Only Prototype Strategy**: Parameter resources are provisioned strictly for DEV (`count = var.environment == "dev" ? 1 : 0`) in `infra/app/secrets.tf`. No PROD parameters are created or managed by Terraform under this prototype mechanism.
+- **Harmless Configuration Placeholders**: Terraform configuration files (`secrets.tf`), variables, and commits contain only harmless fixed placeholder strings (`VEENOE_REPLACE_ME`). Real credentials never exist in Git, `.tfvars`, or deployment inputs.
+- **Manual Out-of-Band Population**: After initial deployment, the operator manually writes real credential values directly into AWS Systems Manager Parameter Store via the AWS Management Console or AWS CLI.
+- **Drift Protection via `ignore_changes`**: Each `aws_ssm_parameter` resource declares `lifecycle { ignore_changes = [value] }`. This prevents Terraform from planning to overwrite or revert externally updated parameter values during subsequent runs.
+- **Terraform State Exposure Caveat**: Declaring `lifecycle { ignore_changes = [value] }` prevents Terraform from planning to overwrite an externally changed value, but it does **NOT** guarantee that real secret values can never appear in remote Terraform state. Terraform refresh operations observe remote resource attributes, meaning real parameter values may become represented in remote Terraform state (`.tfstate`) after subsequent Terraform operations.
+- **S3 State Backend Sensitivity**: Because remote state may capture refreshed parameter attributes, the S3 remote state bucket (`veenoe-terraform-state-165835313361`) and state files must be treated as sensitive, protected by strict least-privilege IAM policies, encryption at rest, and access auditing.
+- **Production Migration Path**: Before production release, this prototype strategy must be migrated to a state-safe approach—such as Terraform 1.11+ write-only attribute support (`value_wo`) or dedicated out-of-band secret management—after separately validating Terraform CLI and AWS provider compatibility.
+- **Runtime Pointer**: Terraform sets a non-sensitive environment variable pointer on the Lambda function: `VEENOE_SSM_PARAMETER_PREFIX = "/veenoe/${var.environment}"`.
 
 ### 2. AWS SSM Parameter Store Parameters
 All parameters reside in **AWS Systems Manager Parameter Store** under the **Standard Tier** using the default AWS-managed KMS key (`alias/aws/ssm`):
 
-| Parameter Name | SSM Type | Sensitivity | Destination Field |
-| :--- | :--- | :--- | :--- |
-| `/veenoe/dev/mongo_uri` | `SecureString` | Secret | `MONGO_URI` |
-| `/veenoe/dev/mongo_db_name` | `String` | Non-Secret | `MONGO_DB_NAME` |
-| `/veenoe/dev/google_api_key` | `SecureString` | Secret | `GOOGLE_API_KEY` |
-| `/veenoe/dev/clerk_secret_key` | `SecureString` | Secret | `CLERK_SECRET_KEY` |
+| Parameter Name | SSM Type | Initial Value | Sensitivity | Destination Field |
+| :--- | :--- | :--- | :--- | :--- |
+| `/veenoe/dev/mongo_uri` | `SecureString` | `VEENOE_REPLACE_ME` | Secret (post-replace) | `MONGO_URI` |
+| `/veenoe/dev/mongo_db_name` | `String` | `VEENOE_REPLACE_ME` | Non-Secret | `MONGO_DB_NAME` |
+| `/veenoe/dev/google_api_key` | `SecureString` | `VEENOE_REPLACE_ME` | Secret (post-replace) | `GOOGLE_API_KEY` |
+| `/veenoe/dev/clerk_secret_key` | `SecureString` | `VEENOE_REPLACE_ME` | Secret (post-replace) | `CLERK_SECRET_KEY` |
 
-*(Equivalent naming `/veenoe/prod/...` is anticipated in Terraform for production, but PROD parameters are not created or deployed).*
+*(Note: PROD parameters are not created by Terraform and will be addressed in a future ticket).*
 
 ### 3. Local Development vs. AWS Lambda Mode
 - **Local Development**: When `VEENOE_SSM_PARAMETER_PREFIX` is absent or unset, the application automatically reads configuration from `.env` or local environment variables via `pydantic-settings`. No AWS API calls are made.
