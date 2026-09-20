@@ -218,7 +218,6 @@ backend/
 ├── scripts/                    # Utility scripts
 ├── .env                        # Environment variables
 ├── requirements.txt            # Python dependencies
-├── vercel.json                 # Vercel deployment config
 └── README.md                   # This file
 ```
 
@@ -272,7 +271,7 @@ graph LR
 | **Rate Limiting** | SlowAPI | Request throttling and quota protection |
 | **Validation** | Pydantic v2 | Schema validation and serialization |
 | **ASGI Server** | Uvicorn | Production-grade async server |
-| **Deployment** | Vercel | Serverless Python hosting |
+| **Deployment** | AWS Lambda & API Gateway | Serverless Python backend with Lambda Web Adapter managed via Terraform |
 
 ---
 
