@@ -41,6 +41,7 @@ from app.schemas.viva import (
 )
 from app.api.deps import get_viva_service, CurrentUser
 from app.services.viva_service import VivaService
+from app.services.gemini_service import GeminiTokenCreationError
 
 logger = logging.getLogger(__name__)
 
@@ -94,18 +95,26 @@ async def start_viva(
             user_id=current_user.user_id,
         )
         return VivaStartResponse(**response_data)
+    except GeminiTokenCreationError as error:
+        logger.error(
+            "event=viva_start_failed error_type=%s",
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to start session. Please try again.",
+        ) from None
     except Exception as e:
-        # Log full error server-side for debugging
-        logger.exception(
-            "Error starting viva for user %s: %s",
-            current_user.user_id,
-            str(e),
+        # Avoid logging exception content or traceback, which may contain request data.
+        logger.error(
+            "event=viva_start_failed error_type=%s",
+            type(e).__name__,
         )
         # Return generic message to client (no internal details)
         raise HTTPException(
             status_code=500,
             detail="Failed to start session. Please try again.",
-        )
+        ) from None
 
 
 @router.post("/conclude-viva", response_model=ConcludeVivaResponse)

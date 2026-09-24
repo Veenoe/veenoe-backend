@@ -30,11 +30,14 @@ This Terraform root module provisions the AWS serverless application runtime for
 
 The backend owns the Gemini model, Live API version, one-use ephemeral-token
 policy (15-minute lifetime), AUDIO modality, session resumption, audio
-transcription settings, default voice (`Kore`), and `conclude_viva` declaration
-in `app/services/gemini_service.py`. The browser receives only the ephemeral
-token and connects directly to Gemini Live; the permanent Google API key stays
-in backend runtime configuration. The tested SDK dependency is pinned to
-`google-genai==2.23.0`.
+transcription settings, `conclude_viva` declaration, and the response fallback
+voice name (`Kore`). The fallback is response metadata when no voice is
+requested; the backend does not add a voice constraint to that token, preserving
+current client-side voice behavior.
+These settings live in `app/services/gemini_service.py`. The browser receives
+only the ephemeral token and connects directly to Gemini Live; the permanent
+Google API key stays in backend runtime configuration. The tested SDK
+dependency is pinned to `google-genai==2.23.0`.
 
 Token issuance writes one attempt event and one success or failure event through
 Python logging to Lambda stdout/stderr and the existing `/aws/lambda/<function>`

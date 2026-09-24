@@ -35,7 +35,11 @@ class GeminiLiveConfig:
     session_resumption: bool = True
     input_audio_transcription: bool = True
     output_audio_transcription: bool = True
-    default_voice: str = "Kore"
+    response_fallback_voice_name: str = "Kore"
+
+
+class GeminiTokenCreationError(RuntimeError):
+    """Sanitized failure raised when Gemini rejects token creation."""
 
 
 GEMINI_LIVE_CONFIG = GeminiLiveConfig()
@@ -271,7 +275,9 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
 
             return {
                 "token": token.name,
-                "voice_name": viva_request.voice_name or config.default_voice,
+                "voice_name": (
+                    viva_request.voice_name or config.response_fallback_voice_name
+                ),
                 "session_duration_minutes": 5,
                 "model_name": self.MODEL_NAME,
             }
@@ -284,4 +290,6 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
                 config.model,
                 config.api_version,
             )
-            raise
+            raise GeminiTokenCreationError(
+                "Gemini ephemeral token creation failed"
+            ) from None
