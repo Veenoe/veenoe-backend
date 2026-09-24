@@ -26,6 +26,26 @@ This Terraform root module provisions the AWS serverless application runtime for
 
 ---
 
+## Gemini Live token control plane and logs
+
+The backend owns the Gemini model, Live API version, one-use ephemeral-token
+policy (15-minute lifetime), AUDIO modality, session resumption, audio
+transcription settings, default voice (`Kore`), and `conclude_viva` declaration
+in `app/services/gemini_service.py`. The browser receives only the ephemeral
+token and connects directly to Gemini Live; the permanent Google API key stays
+in backend runtime configuration. The tested SDK dependency is pinned to
+`google-genai==2.23.0`.
+
+Token issuance writes one attempt event and one success or failure event through
+Python logging to Lambda stdout/stderr and the existing `/aws/lambda/<function>`
+CloudWatch log group. Events include duration and model/API metadata. They never
+include the API key, ephemeral token, student name, topic, prompt, transcript,
+audio, or SDK exception message. Find the function log group in CloudWatch Logs;
+DEV retention is 14 days and PROD retention is 30 days. No log group, metric,
+alarm, dashboard, or IAM permission is added for this behavior. Terraform in
+`infra/app` remains the source of truth for persistent AWS configuration, and
+deployments continue through GitHub Actions OIDC and Terraform.
+
 ## Runtime Configuration & Secrets Architecture (VEENOE-9)
 
 ### 1. Separation of Concerns & State Security

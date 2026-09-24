@@ -12,6 +12,8 @@ Gemini-specific implementation of the LLMClient interface.
 
 import logging
 import datetime
+import time
+from dataclasses import dataclass
 import google.genai as genai
 from app.core.config import settings
 from app.schemas.viva import VivaStartRequest
@@ -19,7 +21,24 @@ from app.interfaces.llm_client import LLMClient
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+
+
+@dataclass(frozen=True)
+class GeminiLiveConfig:
+    """Backend-owned settings for the existing Gemini Live contract."""
+
+    model: str = "gemini-2.5-flash-native-audio-preview-09-2025"
+    api_version: str = "v1alpha"
+    token_uses: int = 1
+    token_ttl_minutes: int = 15
+    response_modalities: tuple[str, ...] = ("AUDIO",)
+    session_resumption: bool = True
+    input_audio_transcription: bool = True
+    output_audio_transcription: bool = True
+    default_voice: str = "Kore"
+
+
+GEMINI_LIVE_CONFIG = GeminiLiveConfig()
 
 
 class GeminiService:
@@ -37,7 +56,7 @@ class GeminiService:
     """
 
     # The Gemini model used for Viva interactions.
-    MODEL_NAME = "gemini-2.5-flash-native-audio-preview-09-2025"
+    MODEL_NAME = GEMINI_LIVE_CONFIG.model
 
     # ----------------------------------------------------------------------
     # Tool Declaration: conclude_viva
@@ -99,7 +118,6 @@ class GeminiService:
         the service instance for model interactions.
         """
         self._api_key = settings.GOOGLE_API_KEY
-        logger.debug("GeminiService initialized with configured API key.")
 
     # ------------------------------------------------------------------
     # System Instruction Builder
@@ -120,11 +138,6 @@ class GeminiService:
             A fully structured prompt for the Gemini model defining
             viva protocol, evaluation rules, and concluding behavior.
         """
-        logger.debug(
-            f"Generating system instruction for viva session → "
-            f"Student: {viva_request.student_name}, Topic: {viva_request.topic}"
-        )
-
         # Construct structured system instructions fed directly to Gemini.
         system_instruction = f"""
 You are an expert oral examiner conducting a Viva (oral exam) for a student.
@@ -190,9 +203,14 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
         Exception
             If token creation fails, the exception is logged and re-raised.
         """
+        started_at = time.perf_counter()
+        config = GEMINI_LIVE_CONFIG
         logger.info(
-            f"Starting ephemeral token creation for viva session. "
-            f"Student: {viva_request.student_name}"
+            "event=gemini_ephemeral_token_attempt model=%s api_version=%s token_uses=%d token_ttl_minutes=%d",
+            config.model,
+            config.api_version,
+            config.token_uses,
+            config.token_ttl_minutes,
         )
 
         try:
@@ -205,13 +223,16 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
 
             # Base configuration passed to the Gemini Live API.
             live_config = {
-                "session_resumption": {},
-                "response_modalities": ["AUDIO"],
+                "response_modalities": list(config.response_modalities),
                 "system_instruction": system_instruction,
                 "tools": [{"function_declarations": tool_declarations}],
-                "input_audio_transcription": {},
-                "output_audio_transcription": {},
             }
+            if config.session_resumption:
+                live_config["session_resumption"] = {}
+            if config.input_audio_transcription:
+                live_config["input_audio_transcription"] = {}
+            if config.output_audio_transcription:
+                live_config["output_audio_transcription"] = {}
 
             # Optionally configure a specific voice.
             if viva_request.voice_name:
@@ -223,31 +244,44 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
 
             # Token configuration: one-time use, expires in 15 minutes.
             token_config = {
-                "uses": 1,
+                "uses": config.token_uses,
                 "expire_time": (
                     datetime.datetime.now(tz=datetime.timezone.utc)
-                    + datetime.timedelta(minutes=15)
+                    + datetime.timedelta(minutes=config.token_ttl_minutes)
                 ),
                 "live_connect_constraints": {
-                    "model": self.MODEL_NAME,
+                    "model": config.model,
                     "config": live_config,
                 },
-                "http_options": {"api_version": "v1alpha"},
+                "http_options": {"api_version": config.api_version},
             }
 
             # Create ephemeral token asynchronously.
             token = await client.aio.auth_tokens.create(config=token_config)
 
+            duration_ms = round((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "event=gemini_ephemeral_token_created duration_ms=%d model=%s api_version=%s token_uses=%d token_ttl_minutes=%d",
+                duration_ms,
+                config.model,
+                config.api_version,
+                config.token_uses,
+                config.token_ttl_minutes,
+            )
+
             return {
                 "token": token.name,
-                "voice_name": viva_request.voice_name or "Kore",
+                "voice_name": viva_request.voice_name or config.default_voice,
                 "session_duration_minutes": 5,
                 "model_name": self.MODEL_NAME,
             }
 
         except Exception as e:
             logger.error(
-                f"Failed to create ephemeral token: {str(e)}",
-                exc_info=True,
+                "event=gemini_ephemeral_token_failed error_type=%s duration_ms=%d model=%s api_version=%s",
+                type(e).__name__,
+                round((time.perf_counter() - started_at) * 1000),
+                config.model,
+                config.api_version,
             )
             raise
