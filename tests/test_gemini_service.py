@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from app.api.deps import get_viva_service
 from app.core.auth import get_current_user
 from app.main import app
-from app.db.models import VivaSession
 from app.schemas.viva import VivaStartRequest
 from app.services import gemini_service
 from app.services.gemini_service import (
@@ -138,7 +137,18 @@ def test_start_endpoint_never_logs_upstream_exception_content(monkeypatch, caplo
         aio=SimpleNamespace(auth_tokens=SimpleNamespace(create=create))
     )
     monkeypatch.setattr(gemini_module.genai, "Client", lambda **_: client)
-    monkeypatch.setattr(VivaSession, "insert", AsyncMock())
+    from app.services import viva_service as viva_service_module
+
+    class FakeVivaSession:
+        id = "507f1f77bcf86cd799439011"
+
+        def __init__(self, **_):
+            pass
+
+        async def insert(self):
+            pass
+
+    monkeypatch.setattr(viva_service_module, "VivaSession", FakeVivaSession)
 
     async def service_dependency():
         from app.services.viva_service import VivaService
@@ -163,6 +173,7 @@ def test_start_endpoint_never_logs_upstream_exception_content(monkeypatch, caplo
     finally:
         app.dependency_overrides.clear()
 
+    create.assert_awaited_once()
     assert response.status_code == 500
     assert response.json() == {
         "detail": "Failed to start session. Please try again."
@@ -177,3 +188,52 @@ def test_start_endpoint_never_logs_upstream_exception_content(monkeypatch, caplo
     ):
         assert private_value not in caplog.text
     assert "event=viva_start_failed" in caplog.text
+
+
+def test_start_endpoint_handles_domain_token_error_without_logging_details(
+    monkeypatch, caplog
+):
+    failure = GeminiTokenCreationError(
+        "test_google_api_key auth_tokens/example-secret private prompt data"
+    )
+
+    class FailingVivaService:
+        async def start_new_viva_session(self, viva_request, user_id):
+            raise failure
+
+    async def service_dependency():
+        return FailingVivaService()
+
+    async def user_dependency():
+        return SimpleNamespace(user_id="user_test_safe")
+
+    app.dependency_overrides[get_viva_service] = service_dependency
+    app.dependency_overrides[get_current_user] = user_dependency
+    caplog.set_level(logging.INFO)
+    try:
+        response = TestClient(app).post(
+            "/api/v1/viva/start",
+            json={
+                "student_name": "Private Student",
+                "topic": "Private Topic",
+                "class_level": "12",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Failed to start session. Please try again."
+    }
+    assert "event=viva_start_failed" in caplog.text
+    assert "error_type=GeminiTokenCreationError" in caplog.text
+    for private_value in (
+        "test_google_api_key",
+        "auth_tokens/example-secret",
+        "private prompt data",
+        "Private Student",
+        "Private Topic",
+        "Traceback",
+    ):
+        assert private_value not in caplog.text

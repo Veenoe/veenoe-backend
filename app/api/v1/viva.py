@@ -95,10 +95,9 @@ async def start_viva(
             user_id=current_user.user_id,
         )
         return VivaStartResponse(**response_data)
-    except GeminiTokenCreationError as error:
+    except GeminiTokenCreationError:
         logger.error(
-            "event=viva_start_failed error_type=%s",
-            type(e).__name__,
+            "event=viva_start_failed error_type=GeminiTokenCreationError"
         )
         raise HTTPException(
             status_code=500,
