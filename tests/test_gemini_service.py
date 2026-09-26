@@ -180,7 +180,9 @@ def test_start_endpoint_never_logs_upstream_exception_content(monkeypatch, caplo
 
     create.assert_awaited_once()
     assert response.status_code == 500
-    assert response.json() == {"detail": "Failed to start session. Please try again."}
+    assert response.json() == {
+        "detail": "Failed to start session. Please try again."
+    }
     for private_value in (
         "test_google_api_key",
         "auth_tokens/example-secret",
@@ -226,7 +228,9 @@ def test_start_endpoint_handles_domain_token_error_without_logging_details(
         app.dependency_overrides.clear()
 
     assert response.status_code == 500
-    assert response.json() == {"detail": "Failed to start session. Please try again."}
+    assert response.json() == {
+        "detail": "Failed to start session. Please try again."
+    }
     assert "event=viva_start_failed" in caplog.text
     assert "error_type=GeminiTokenCreationError" in caplog.text
     for private_value in (

@@ -1,9 +1,26 @@
-# Gemini Live contract (2026-09-26)
+# Gemini Live contract
 
-Decision before implementation: Use the stable `gemini-3.8-live` model with the `v1beta` Live API, `@google/genai` 2.24.0, and `google-genai` 2.25.0. The backend provisions a one-use, constrained ephemeral token; the browser receives that token and connects directly to Gemini. The permanent API key remains backend-only. Google documents `v1beta` as required for ephemeral-token Live connections, and both SDK examples use the bare model name. The token retains the model, system instruction, tool, audio, transcription, and resumption constraints.
+## Tested contract
 
-Migration decisions: Gemini 3.8 Live defaults to asynchronous function calls, so `conclude_viva` uses `BLOCKING` to retain the spoken closing then conclusion sequence. Client text updates use an explicit user role and completed turn. The browser selects `v1beta` at `GoogleGenAI` construction; the backend selects it at `genai.Client` construction, not in token creation config. Existing Puck client voice and Kore response fallback remain as they were.
+- Date: 2026-09-26
+- Model: `gemini-3.8-live`
+- Live API version: `v1beta`
+- JavaScript SDK: `@google/genai` 2.24.0
+- Python SDK: `google-genai` 2.25.0
 
-Verification commands: backend `uv pip install --python .\.venv-veenoe-17\Scripts\python.exe -r requirements.txt`, `uv pip install --python .\.venv-veenoe-17\Scripts\python.exe pytest`, `.\.venv-veenoe-17\Scripts\python.exe -m pytest -q tests/test_gemini_service.py` (4 passed), and `.\.venv-veenoe-17\Scripts\python.exe -m pytest -q` (24 passed, 6 packaging tests require a separately built Lambda ZIP). Webapp `npm test` (13 passed), `npx tsc --noEmit` (passed), `npm run build` (passed), `npm run lint` (fails on pre-existing errors outside Gemini code). `git diff --check` passed in both repositories. A real Live session was not run.
+## Architecture
 
-Sources: [Gemini 3.8 Live model](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live), [ephemeral tokens](https://ai.google.dev/gemini-api/docs/live-api/ephemeral-tokens), [Live WebSocket endpoint](https://ai.google.dev/gemini-api/docs/live-api/get-started-websocket), [npm release](https://www.npmjs.com/package/@google/genai), [PyPI release](https://pypi.org/project/google-genai/2.25.0/). The local Gemini skill points Live work to separate guidance and includes older general examples; current official Live docs and installed SDK types governed this migration.
+The backend provisions a constrained ephemeral token. The browser receives the token and connects directly to Gemini Live. The permanent Google API key stays backend-only.
+
+## Compatibility decisions
+
+- `conclude_viva` is `BLOCKING` because Gemini 3.8 Live defaults to non-blocking function calls. This preserves the required order: Gemini speaks the final summary, then invokes the tool. Veenoe's client sends the result to its own backend and finishes after audio playback; it does not send a Gemini function response.
+- Text input uses a structured `user` content turn with `turnComplete: true`.
+- Existing Puck client voice and Kore fallback response metadata remain unchanged.
+- AUDIO responses, input/output transcription, and session resumption stay in the backend token constraints.
+
+## Verification
+
+- Backend Gemini service tests: 4 passed. Full backend suite: 24 passed; 6 packaging tests require the Lambda ZIP artifact.
+- Webapp tests: 17 passed; TypeScript and production build passed. Repository lint still reports existing errors outside modified files.
+- Developer manually verified: start viva → token → direct Live connection → voice conversation → `conclude_viva` → session completion.
