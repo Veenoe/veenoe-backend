@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 class GeminiLiveConfig:
     """Backend-owned settings for the existing Gemini Live contract."""
 
-    model: str = "gemini-2.5-flash-native-audio-preview-09-2025"
-    api_version: str = "v1alpha"
+    model: str = "gemini-3.8-live"
+    api_version: str = "v1beta"
     token_uses: int = 1
     token_ttl_minutes: int = 15
     response_modalities: tuple[str, ...] = ("AUDIO",)
@@ -69,6 +69,8 @@ class GeminiService:
     # the viva session with detailed evaluation metadata.
     _CONCLUDE_VIVA_TOOL = {
         "name": "conclude_viva",
+        # 3.8 defaults to non-blocking calls; conclusion must follow spoken closing.
+        "behavior": "BLOCKING",
         "description": (
             "Call this tool to END the viva session. You MUST provide a score, "
             "summary, strengths, and areas for improvement."
@@ -219,7 +221,10 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
 
         try:
             # A new client is created per request to maintain async safety.
-            client = genai.Client(api_key=self._api_key)
+            client = genai.Client(
+                api_key=self._api_key,
+                http_options={"api_version": config.api_version},
+            )
 
             # Build system instructions and tool declarations.
             system_instruction = self.generate_system_instruction(viva_request)
@@ -257,7 +262,6 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
                     "model": config.model,
                     "config": live_config,
                 },
-                "http_options": {"api_version": config.api_version},
             }
 
             # Create ephemeral token asynchronously.
