@@ -36,7 +36,7 @@ Veenoe is a **SaaS backend** that powers AI-driven oral examinations (vivas) usi
 
 ### Core Capabilities
 
-- **Real-Time AI Examinations**: WebSocket-based live audio interaction with Google Gemini 2.5
+- **Real-Time AI Examinations**: Browser-direct live audio interaction with Gemini 3.8 Live via a constrained ephemeral token
 - **Dynamic Question Generation**: AI adapts questions based on student responses and difficulty level
 - **Structured Evaluation**: Automated scoring (0-10) with detailed strengths and improvement areas
 - **Session Management**: Full CRUD operations for viva sessions with ownership controls
@@ -49,6 +49,8 @@ Veenoe is a **SaaS backend** that powers AI-driven oral examinations (vivas) usi
 - **Rate Limiting**: Protection against API quota exhaustion and abuse
 - **Health Checks**: Production-ready endpoints for load balancer integration
 - **Graceful Shutdown**: Proper resource cleanup on application termination
+
+The current Gemini model, API version, SDK versions, and token architecture are recorded in the [Gemini Live contract](docs/gemini-live-contract.md).
 
 ---
 
@@ -266,7 +268,7 @@ graph LR
 | **Web Framework** | FastAPI 0.115+ | Async REST API with automatic OpenAPI docs |
 | **Database** | MongoDB | Document storage for session data |
 | **ODM** | Beanie | Async MongoDB object-document mapping |
-| **AI/ML** | Google Gemini 2.5 Flash | Real-time audio conversation model |
+| **AI/ML** | Google Gemini 3.8 Live | Real-time audio conversation model |
 | **Authentication** | Clerk | JWT-based identity management |
 | **Rate Limiting** | SlowAPI | Request throttling and quota protection |
 | **Validation** | Pydantic v2 | Schema validation and serialization |
@@ -384,7 +386,7 @@ Authorization: Bearer <token>
 {
   "viva_session_id": "507f1f77bcf86cd799439011",
   "ephemeral_token": "projects/.../tokens/...",
-  "google_model": "gemini-2.5-flash-native-audio-preview-09-2025",
+  "google_model": "gemini-3.8-live",
   "session_duration_minutes": 5,
   "voice_name": "Kore"
 }

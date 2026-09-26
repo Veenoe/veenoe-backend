@@ -35,7 +35,13 @@ def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplo
     client = SimpleNamespace(
         aio=SimpleNamespace(auth_tokens=SimpleNamespace(create=create))
     )
-    monkeypatch.setattr(gemini_service.genai, "Client", lambda **_: client)
+    client_args = {}
+
+    def fake_client(**kwargs):
+        client_args.update(kwargs)
+        return client
+
+    monkeypatch.setattr(gemini_service.genai, "Client", fake_client)
     caplog.set_level(logging.INFO, logger=gemini_service.__name__)
 
     response = asyncio.run(
@@ -44,11 +50,9 @@ def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplo
 
     config = create.await_args.kwargs["config"]
     live = config["live_connect_constraints"]["config"]
-    assert (
-        config["live_connect_constraints"]["model"]
-        == "gemini-2.5-flash-native-audio-preview-09-2025"
-    )
-    assert config["http_options"]["api_version"] == "v1alpha"
+    assert config["live_connect_constraints"]["model"] == "gemini-3.8-live"
+    assert client_args["http_options"]["api_version"] == "v1beta"
+    assert "http_options" not in config
     assert config["uses"] == 1
     remaining = config["expire_time"] - datetime.datetime.now(datetime.timezone.utc)
     assert (
@@ -61,6 +65,7 @@ def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplo
     assert live["input_audio_transcription"] == {}
     assert live["output_audio_transcription"] == {}
     assert live["tools"][0]["function_declarations"][0]["name"] == "conclude_viva"
+    assert live["tools"][0]["function_declarations"][0]["behavior"] == "BLOCKING"
     assert (
         live["speech_config"]["voice_config"]["prebuilt_voice_config"]["voice_name"]
         == "Aoede"
