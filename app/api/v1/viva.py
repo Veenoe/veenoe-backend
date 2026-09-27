@@ -178,6 +178,26 @@ async def get_history(
         )
 
 
+@router.post("/{session_id}/abandon")
+async def abandon_session(
+    session_id: SessionIdPath,
+    service: Annotated[VivaService, Depends(get_viva_service)],
+    current_user: CurrentUser,
+):
+    try:
+        return await service.abandon_viva_session(session_id, current_user.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception:
+        logger.exception("Error abandoning viva session")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to end session. Please try again.",
+        )
+
+
 @router.get("/{session_id}", response_model=VivaSessionDetailResponse)
 async def get_session_details(
     session_id: SessionIdPath,
