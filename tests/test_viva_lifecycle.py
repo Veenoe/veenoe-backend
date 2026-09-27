@@ -98,3 +98,34 @@ def test_expiry_only_targets_in_progress_records(monkeypatch):
     assert criteria["$or"][0]["expires_at"]["$lte"] <= datetime.datetime.now(
         datetime.timezone.utc
     )
+
+
+def test_conclusion_does_not_complete_after_abandon_wins(monkeypatch):
+    initially_active = SimpleNamespace(id=SESSION_ID, status="in_progress")
+    already_abandoned = SimpleNamespace(id=SESSION_ID, status="abandoned")
+    update = AsyncMock(return_value=SimpleNamespace(modified_count=0))
+    monkeypatch.setattr(
+        module,
+        "VivaSession",
+        SimpleNamespace(
+            get_motor_collection=lambda: SimpleNamespace(update_one=update)
+        ),
+    )
+    service = VivaService(SimpleNamespace())
+    service._get_session_with_ownership_check = AsyncMock(
+        side_effect=[initially_active, already_abandoned]
+    )
+
+    with pytest.raises(ValueError, match="no longer active"):
+        asyncio.run(
+            service.conclude_viva_session(
+                viva_session_id=SESSION_ID,
+                score=8,
+                summary="feedback",
+                strong_points=[],
+                areas_of_improvement=[],
+                user_id="owner",
+            )
+        )
+
+    assert update.await_args.args[0]["status"] == "in_progress"
