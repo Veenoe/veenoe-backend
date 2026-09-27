@@ -42,6 +42,7 @@ class VivaStartResponse(BaseModel):
     google_model: str
     session_duration_minutes: int
     voice_name: str
+    vad_profile: Optional[str] = None
 
 
 # == Conclude Viva Schemas ==

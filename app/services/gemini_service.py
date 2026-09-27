@@ -15,12 +15,41 @@ import datetime
 import time
 from dataclasses import dataclass
 import google.genai as genai
+from google.genai import types
 from app.core.config import settings
 from app.schemas.viva import VivaStartRequest
 from app.interfaces.llm_client import LLMClient
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GeminiVadProfile:
+    """Single backend-owned server VAD policy for a Live token."""
+
+    name: str = "balanced-v1"
+    start_sensitivity: types.StartSensitivity = (
+        types.StartSensitivity.START_SENSITIVITY_HIGH
+    )
+    end_sensitivity: types.EndSensitivity = types.EndSensitivity.END_SENSITIVITY_LOW
+    prefix_padding_ms: int = 40
+    silence_duration_ms: int = 700
+    activity_handling: types.ActivityHandling = (
+        types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
+    )
+
+    def realtime_input_config(self) -> types.RealtimeInputConfig:
+        return types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                disabled=False,
+                start_of_speech_sensitivity=self.start_sensitivity,
+                end_of_speech_sensitivity=self.end_sensitivity,
+                prefix_padding_ms=self.prefix_padding_ms,
+                silence_duration_ms=self.silence_duration_ms,
+            ),
+            activity_handling=self.activity_handling,
+        )
 
 
 @dataclass(frozen=True)
@@ -36,6 +65,7 @@ class GeminiLiveConfig:
     input_audio_transcription: bool = True
     output_audio_transcription: bool = True
     response_fallback_voice_name: str = "Kore"
+    vad_profile: GeminiVadProfile = GeminiVadProfile()
 
 
 class GeminiTokenCreationError(RuntimeError):
@@ -212,11 +242,12 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
         started_at = time.perf_counter()
         config = GEMINI_LIVE_CONFIG
         logger.info(
-            "event=gemini_ephemeral_token_attempt model=%s api_version=%s token_uses=%d token_ttl_minutes=%d",
+            "event=gemini_ephemeral_token_attempt model=%s api_version=%s token_uses=%d token_ttl_minutes=%d vad_profile=%s",
             config.model,
             config.api_version,
             config.token_uses,
             config.token_ttl_minutes,
+            config.vad_profile.name,
         )
 
         try:
@@ -235,6 +266,8 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
                 "response_modalities": list(config.response_modalities),
                 "system_instruction": system_instruction,
                 "tools": [{"function_declarations": tool_declarations}],
+                # No field mask: this token setup is authoritative, including VAD.
+                "realtime_input_config": config.vad_profile.realtime_input_config(),
             }
             if config.session_resumption:
                 live_config["session_resumption"] = {}
@@ -243,13 +276,15 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
             if config.output_audio_transcription:
                 live_config["output_audio_transcription"] = {}
 
-            # Optionally configure a specific voice.
-            if viva_request.voice_name:
-                live_config["speech_config"] = {
-                    "voice_config": {
-                        "prebuilt_voice_config": {"voice_name": viva_request.voice_name}
-                    }
+            # The token owns the effective voice, including the fallback.
+            effective_voice = (
+                viva_request.voice_name or config.response_fallback_voice_name
+            )
+            live_config["speech_config"] = {
+                "voice_config": {
+                    "prebuilt_voice_config": {"voice_name": effective_voice}
                 }
+            }
 
             # Token configuration: one-time use, expires in 15 minutes.
             token_config = {
@@ -269,30 +304,31 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
 
             duration_ms = round((time.perf_counter() - started_at) * 1000)
             logger.info(
-                "event=gemini_ephemeral_token_created duration_ms=%d model=%s api_version=%s token_uses=%d token_ttl_minutes=%d",
+                "event=gemini_ephemeral_token_created duration_ms=%d model=%s api_version=%s token_uses=%d token_ttl_minutes=%d vad_profile=%s",
                 duration_ms,
                 config.model,
                 config.api_version,
                 config.token_uses,
                 config.token_ttl_minutes,
+                config.vad_profile.name,
             )
 
             return {
                 "token": token.name,
-                "voice_name": (
-                    viva_request.voice_name or config.response_fallback_voice_name
-                ),
+                "voice_name": effective_voice,
                 "session_duration_minutes": 5,
                 "model_name": self.MODEL_NAME,
+                "vad_profile": config.vad_profile.name,
             }
 
         except Exception as e:
             logger.error(
-                "event=gemini_ephemeral_token_failed error_type=%s duration_ms=%d model=%s api_version=%s",
+                "event=gemini_ephemeral_token_failed error_type=%s duration_ms=%d model=%s api_version=%s vad_profile=%s",
                 type(e).__name__,
                 round((time.perf_counter() - started_at) * 1000),
                 config.model,
                 config.api_version,
+                config.vad_profile.name,
             )
             raise GeminiTokenCreationError(
                 "Gemini ephemeral token creation failed"
