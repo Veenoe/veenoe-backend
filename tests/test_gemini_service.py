@@ -1,10 +1,12 @@
 import asyncio
 import datetime
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from google.genai import types
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_viva_service
@@ -64,6 +66,31 @@ def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplo
     assert live["session_resumption"] == {}
     assert live["input_audio_transcription"] == {}
     assert live["output_audio_transcription"] == {}
+    assert "lock_additional_fields" not in config  # Unmasked token setup owns VAD.
+    realtime = live["realtime_input_config"]
+    assert isinstance(realtime, types.RealtimeInputConfig)
+    detection = realtime.automatic_activity_detection
+    assert detection is not None
+    assert detection.disabled is False
+    assert (
+        detection.start_of_speech_sensitivity
+        == types.StartSensitivity.START_SENSITIVITY_HIGH
+    )
+    assert (
+        detection.end_of_speech_sensitivity
+        == types.EndSensitivity.END_SENSITIVITY_LOW
+    )
+    assert detection.prefix_padding_ms == 40
+    assert detection.silence_duration_ms == 700
+    assert (
+        realtime.activity_handling
+        == types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
+    )
+    assert realtime.turn_coverage is None
+    assert (
+        types.CreateAuthTokenConfig.model_validate(config).live_connect_constraints
+        is not None
+    )
     assert live["tools"][0]["function_declarations"][0]["name"] == "conclude_viva"
     assert live["tools"][0]["function_declarations"][0]["behavior"] == "BLOCKING"
     assert (
@@ -73,8 +100,17 @@ def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplo
     assert response["voice_name"] == "Aoede"
     assert response["token"] == "ephemeral-secret-token"
     assert response["model_name"] == GEMINI_LIVE_CONFIG.model
+    assert response["vad_profile"] == GEMINI_LIVE_CONFIG.vad_profile.name
+    assert set(response) == {
+        "token",
+        "voice_name",
+        "session_duration_minutes",
+        "model_name",
+        "vad_profile",
+    }
     assert "event=gemini_ephemeral_token_attempt" in caplog.text
     assert "event=gemini_ephemeral_token_created" in caplog.text
+    assert "vad_profile=balanced-v1" in caplog.text
     assert "duration_ms=" in caplog.text
     for private_value in (
         "test_google_api_key",
@@ -128,6 +164,92 @@ def test_default_voice_and_failure_logs_only_safe_metadata(monkeypatch, caplog):
     ]
     assert "speech_config" not in live
     assert response["voice_name"] == "Kore"
+
+
+def test_pinned_sdk_serializes_effective_vad_token_setup(monkeypatch):
+    """Exercise the real SDK converter without making a paid or network API call."""
+    client = gemini_service.genai.Client(
+        api_key="test_google_api_key", http_options={"api_version": "v1beta"}
+    )
+    send = AsyncMock(
+        return_value=SimpleNamespace(body=b'{"name":"auth_tokens/test"}')
+    )
+    monkeypatch.setattr(client._api_client, "async_request", send)
+    monkeypatch.setattr(gemini_service.genai, "Client", lambda **_: client)
+
+    response = asyncio.run(GeminiService().create_ephemeral_token(request()))
+    assert response["token"] == "auth_tokens/test"
+
+    payload = json.loads(json.dumps(send.await_args.args[2]))
+    assert "fieldMask" not in payload
+    setup = payload["bidiGenerateContentSetup"]
+    assert setup["model"] == "models/gemini-3.8-live"
+    detection = setup["realtimeInputConfig"]["automatic_activity_detection"]
+    assert detection == {
+        "disabled": False,
+        "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
+        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+        "prefix_padding_ms": 40,
+        "silence_duration_ms": 700,
+    }
+    assert (
+        setup["realtimeInputConfig"]["activity_handling"]
+        == "START_OF_ACTIVITY_INTERRUPTS"
+    )
+
+
+def test_start_response_exposes_only_safe_vad_profile_metadata(monkeypatch):
+    from app.services import viva_service as viva_service_module
+    from app.services.viva_service import VivaService
+
+    class FakeVivaSession:
+        id = "507f1f77bcf86cd799439011"
+
+        def __init__(self, **_):
+            pass
+
+        async def insert(self):
+            pass
+
+    class FakeLlmClient:
+        async def create_ephemeral_token(self, _request):
+            return {
+                "token": "auth_tokens/test-secret",
+                "voice_name": "Kore",
+                "model_name": GEMINI_LIVE_CONFIG.model,
+                "session_duration_minutes": 5,
+                "vad_profile": GEMINI_LIVE_CONFIG.vad_profile.name,
+            }
+
+    monkeypatch.setattr(viva_service_module, "VivaSession", FakeVivaSession)
+
+    async def service_dependency():
+        return VivaService(llm_client=FakeLlmClient())
+
+    async def user_dependency():
+        return SimpleNamespace(user_id="user_test_safe")
+
+    app.dependency_overrides[get_viva_service] = service_dependency
+    app.dependency_overrides[get_current_user] = user_dependency
+    try:
+        response = TestClient(app).post(
+            "/api/v1/viva/start",
+            json={
+                "student_name": "Private Student",
+                "topic": "Private Topic",
+                "class_level": "12",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["vad_profile"] == "balanced-v1"
+    assert body["google_model"] == GEMINI_LIVE_CONFIG.model
+    assert body["ephemeral_token"] == "auth_tokens/test-secret"
+    assert "realtime_input_config" not in body
+    assert "system_instruction" not in body
 
 
 def test_start_endpoint_never_logs_upstream_exception_content(monkeypatch, caplog):

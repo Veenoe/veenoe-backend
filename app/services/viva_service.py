@@ -93,6 +93,7 @@ class VivaService:
             "google_model": token_data.get("model_name", "unknown-model"),
             "session_duration_minutes": token_data["session_duration_minutes"],
             "voice_name": token_data["voice_name"],
+            "vad_profile": token_data.get("vad_profile"),
         }
 
     # ----------------------------------------------------------------------
