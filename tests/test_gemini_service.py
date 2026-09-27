@@ -162,7 +162,10 @@ def test_default_voice_and_failure_logs_only_safe_metadata(monkeypatch, caplog):
     live = success_create.await_args.kwargs["config"]["live_connect_constraints"][
         "config"
     ]
-    assert "speech_config" not in live
+    assert (
+        live["speech_config"]["voice_config"]["prebuilt_voice_config"]["voice_name"]
+        == "Kore"
+    )
     assert response["voice_name"] == "Kore"
 
 

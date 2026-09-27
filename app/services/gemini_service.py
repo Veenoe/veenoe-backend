@@ -276,13 +276,15 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
             if config.output_audio_transcription:
                 live_config["output_audio_transcription"] = {}
 
-            # Optionally configure a specific voice.
-            if viva_request.voice_name:
-                live_config["speech_config"] = {
-                    "voice_config": {
-                        "prebuilt_voice_config": {"voice_name": viva_request.voice_name}
-                    }
+            # The token owns the effective voice, including the fallback.
+            effective_voice = (
+                viva_request.voice_name or config.response_fallback_voice_name
+            )
+            live_config["speech_config"] = {
+                "voice_config": {
+                    "prebuilt_voice_config": {"voice_name": effective_voice}
                 }
+            }
 
             # Token configuration: one-time use, expires in 15 minutes.
             token_config = {
@@ -313,9 +315,7 @@ You are an expert oral examiner conducting a Viva (oral exam) for a student.
 
             return {
                 "token": token.name,
-                "voice_name": (
-                    viva_request.voice_name or config.response_fallback_voice_name
-                ),
+                "voice_name": effective_voice,
                 "session_duration_minutes": 5,
                 "model_name": self.MODEL_NAME,
                 "vad_profile": config.vad_profile.name,
