@@ -17,6 +17,10 @@ from app.schemas.viva import VivaStartRequest
 from app.interfaces.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
+# The browser can disappear without sending a final request. Reconcile on reads
+# after the issued Live session's five-minute lifetime plus delivery grace.
+SESSION_EXPIRY_GRACE = datetime.timedelta(minutes=2)
+LEGACY_SESSION_LIFETIME = datetime.timedelta(minutes=7)
 
 
 class VivaService:
@@ -70,7 +74,9 @@ class VivaService:
         Returns:
             dict: Metadata required by the client to join the live AI session.
         """
-        # Create session record with authenticated user ID (from JWT, not request)
+        # A token failure must not leave a session that was never usable.
+        token_data = await self.llm_client.create_ephemeral_token(viva_request)
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
         new_session = VivaSession(
             student_name=viva_request.student_name,
             user_id=user_id,  # From JWT, never from request
@@ -78,13 +84,15 @@ class VivaService:
             session_type=viva_request.session_type or "viva",
             topic=viva_request.topic,
             class_level=viva_request.class_level,
-            started_at=datetime.datetime.now(tz=datetime.timezone.utc),
+            started_at=now,
+            expires_at=(
+                now
+                + datetime.timedelta(minutes=token_data["session_duration_minutes"])
+                + SESSION_EXPIRY_GRACE
+            ),
             status="in_progress",
         )
         await new_session.insert()
-
-        # Request ephemeral token from LLM provider
-        token_data = await self.llm_client.create_ephemeral_token(viva_request)
 
         return {
             "viva_session_id": str(new_session.id),
@@ -131,6 +139,14 @@ class VivaService:
         """
         # Validate and get session with ownership check
         session = await self._get_session_with_ownership_check(viva_session_id, user_id)
+        if session.status != "in_progress":
+            if session.status == "completed" and session.feedback:
+                return {
+                    "status": "completed",
+                    "score": session.feedback.score,
+                    "final_feedback": session.feedback.summary,
+                }
+            raise ValueError("Session is no longer active")
 
         # Construct feedback object
         feedback_data = VivaFeedback(
@@ -140,12 +156,25 @@ class VivaService:
             areas_of_improvement=areas_of_improvement,
         )
 
-        # Update session state
-        session.feedback = feedback_data
-        session.status = "completed"
-        session.ended_at = datetime.datetime.now(tz=datetime.timezone.utc)
-
-        await session.save()
+        result = await VivaSession.get_motor_collection().update_one(
+            {"_id": session.id, "user_id": user_id, "status": "in_progress"},
+            {
+                "$set": {
+                    "feedback": feedback_data.model_dump(),
+                    "status": "completed",
+                    "ended_at": datetime.datetime.now(tz=datetime.timezone.utc),
+                }
+            },
+        )
+        if not result.modified_count:
+            current = await self._get_session_with_ownership_check(viva_session_id, user_id)
+            if current.status == "completed" and current.feedback:
+                return {
+                    "status": "completed",
+                    "score": current.feedback.score,
+                    "final_feedback": current.feedback.summary,
+                }
+            raise ValueError("Session is no longer active")
         logger.info("Session %s concluded by user %s", viva_session_id, user_id)
 
         return {
@@ -153,6 +182,42 @@ class VivaService:
             "score": score,
             "final_feedback": summary,
         }
+
+    async def abandon_viva_session(self, session_id: str, user_id: str) -> dict:
+        session = await self._get_session_with_ownership_check(session_id, user_id)
+        await VivaSession.get_motor_collection().update_one(
+            {"_id": session.id, "user_id": user_id, "status": "in_progress"},
+            {
+                "$set": {
+                    "status": "abandoned",
+                    "ended_at": datetime.datetime.now(tz=datetime.timezone.utc),
+                }
+            },
+        )
+        current = await VivaSession.get(session.id)
+        return {"status": current.status}
+
+    async def _reconcile_expired_sessions(
+        self, user_id: str | None = None, session_id: ObjectId | None = None
+    ) -> None:
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+        criteria = {
+            "status": "in_progress",
+            "$or": [
+                {"expires_at": {"$lte": now}},
+                {
+                    "expires_at": None,
+                    "started_at": {"$lte": now - LEGACY_SESSION_LIFETIME},
+                },
+            ],
+        }
+        if user_id is not None:
+            criteria["user_id"] = user_id
+        if session_id is not None:
+            criteria["_id"] = session_id
+        await VivaSession.get_motor_collection().update_many(
+            criteria, {"$set": {"status": "abandoned", "ended_at": now}}
+        )
 
     # ----------------------------------------------------------------------
     # Get Session Details
@@ -179,6 +244,7 @@ class VivaService:
         except InvalidId:
             raise ValueError(f"Invalid session ID format: {session_id}")
 
+        await self._reconcile_expired_sessions(session_id=object_id)
         session = await VivaSession.get(object_id)
         if not session:
             raise ValueError(f"Viva session {session_id} not found")
@@ -211,6 +277,7 @@ class VivaService:
         Returns:
             list[dict]: A list of lightweight session summaries.
         """
+        await self._reconcile_expired_sessions(user_id=user_id)
         sessions = (
             await VivaSession.find(VivaSession.user_id == user_id)
             .sort(-VivaSession.started_at)

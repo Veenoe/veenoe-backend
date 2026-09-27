@@ -90,6 +90,7 @@ class VivaSession(Document):
         default=None,
         description="Timestamp (UTC) when the session ended, if applicable",
     )
+    expires_at: Optional[datetime.datetime] = None
 
     # Current session state
     status: str = Field(
