@@ -187,6 +187,15 @@ def test_pinned_sdk_serializes_effective_vad_token_setup(monkeypatch):
     assert "fieldMask" not in payload
     setup = payload["bidiGenerateContentSetup"]
     assert setup["model"] == "models/gemini-3.8-live"
+    assert payload["uses"] == 1
+    assert "expireTime" in payload
+    assert setup["generationConfig"]["responseModalities"] == ["AUDIO"]
+    assert setup["inputAudioTranscription"] == {}
+    assert setup["outputAudioTranscription"] == {}
+    assert setup["sessionResumption"] == {}
+    voice = setup["generationConfig"]["speechConfig"]["voice_config"]
+    assert voice["prebuilt_voice_config"]["voice_name"] == "Kore"
+    assert setup["tools"][0]["functionDeclarations"][0]["behavior"] == "BLOCKING"
     detection = setup["realtimeInputConfig"]["automatic_activity_detection"]
     assert detection == {
         "disabled": False,
