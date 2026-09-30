@@ -18,6 +18,7 @@ import google.genai as genai
 from google.genai import types
 from app.core.config import settings
 from app.schemas.viva import VivaStartRequest
+from app.services.assessment_prompt import build_assessment_instruction
 from app.interfaces.llm_client import LLMClient
 
 # Configure module-level logger
@@ -103,34 +104,67 @@ class GeminiService:
         "behavior": "BLOCKING",
         "description": (
             "Call this tool to END the viva session. You MUST provide a score, "
-            "summary, strengths, and areas for improvement."
+            "summary, strengths, development areas and session evidence AFTER the spoken closing."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
+                "next_steps": {
+                    "type": "ARRAY", "maxItems": 3,
+                    "items": {"type": "STRING", "minLength": 1, "maxLength": 600},
+                    "description": (
+                        "Up to three prioritized, class-appropriate practice actions tied to "
+                        "session evidence. Each says what to practise and how to check progress. "
+                        "Use simple available materials; parents can prompt without giving answers. "
+                        "Empty when there is insufficient evidence for advice."
+                    ),
+                },
+                "coverage_note": {
+                    "type": "STRING", "minLength": 1, "maxLength": 600,
+                    "description": (
+                        "Brief scope and limits: topic/concepts explored, important skills not "
+                        "tested, and that this is one short session rather than overall mastery."
+                    ),
+                },
                 "score": {
                     "type": "INTEGER",
+                    "minimum": 0,
+                    "maximum": 10,
                     "description": (
                         "Final score out of 10 based on technical accuracy "
-                        "and communication."
+                        "and explanation; secondary compatibility field, never speaking fluency."
                     ),
                 },
                 "summary": {
                     "type": "STRING",
-                    "description": "A polite closing statement and final performance summary.",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": (
+                        "Parent-readable summary of topic coverage and demonstrated reasoning. "
+                        "Distinguish independent answers from meaningful hints, mention observed "
+                        "misconceptions/corrections and coverage gaps. One short session only; "
+                        "never infer fixed ability. This is the written report, not the spoken goodbye."
+                    ),
                 },
                 "strong_points": {
                     "type": "ARRAY",
-                    "items": {"type": "STRING"},
+                    "maxItems": 5,
+                    "items": {"type": "STRING", "minLength": 1, "maxLength": 600},
                     "description": (
-                        "List of 2–3 specific concepts the student demonstrated strong understanding of."
+                        "Up to five specific concepts or reasoning behaviors demonstrated, "
+                        "with concise session evidence and any meaningful assistance; "
+                        "empty if none observed."
                     ),
                 },
                 "areas_of_improvement": {
                     "type": "ARRAY",
-                    "items": {"type": "STRING"},
+                    "maxItems": 5,
+                    "items": {"type": "STRING", "minLength": 1, "maxLength": 600},
                     "description": (
-                        "List of 2–3 specific topics the student needs to improve."
+                        "Up to five specific learning gaps demonstrated in the answers. "
+                        "Describe what remains unclear, recognizing later corrections; "
+                        "never penalize untested skills; "
+                        "empty if insufficient evidence."
                     ),
                 },
             },
@@ -139,6 +173,8 @@ class GeminiService:
                 "summary",
                 "strong_points",
                 "areas_of_improvement",
+                "next_steps",
+                "coverage_note",
             ],
         },
     }
@@ -174,39 +210,7 @@ class GeminiService:
             A fully structured prompt for the Gemini model defining
             viva protocol, evaluation rules, and concluding behavior.
         """
-        # Construct structured system instructions fed directly to Gemini.
-        system_instruction = f"""
-You are an expert oral examiner conducting a Viva (oral exam) for a student.
-
-**Student Name:** {viva_request.student_name}
-**Topic:** {viva_request.topic}
-**Class Level:** {viva_request.class_level}
-**Session Duration:** 5 minutes maximum
-
-**Language:** Speak in English throughout the viva. Switch languages only if the student explicitly asks you to. Do not switch because of background voices, accents, or incidental noise.
-
-**Your Role & Protocol:**
-1.  **Welcome**: Start by welcoming the student and stating the topic clearly.
-2.  **Questioning**: Ask **one question at a time**.
-    -   Generate questions dynamically based on the topic and class level.
-    -   Keep questions conversational but academically rigorous.
-    -   Start with fundamental concepts. If answered correctly, increase difficulty.
-    -   If the student struggles, provide a small hint or ask a simpler follow-up.
-3.  **Evaluation (Internal)**: You must mentally track their performance.
-    -   Start with a baseline score of 10/10.
-    -   Deduct points for factual errors, inability to explain concepts, or requiring too many hints.
-    -   Note down specific strengths and weaknesses as you go.
-4.  **Conclusion**: After asking 5-7 questions OR if the user indicates they want to stop (e.g., "End viva"), you MUST conclude the session in **two steps**:
-    a.  **First, speak your conclusion out loud.** Thank the student for their time, give a brief verbal summary of how they did (e.g., "You demonstrated a solid understanding of X and Y. I'd suggest reviewing Z for next time."), and say a warm goodbye.
-    b.  **Then, immediately after you finish speaking, call the `conclude_viva` tool** with the final score and detailed written feedback.
-
-**Strict Rules:**
--   **DO NOT** provide a running score after every question.
--   **DO NOT** say "Correct" or "Incorrect" robotically. Respond naturally (e.g., "That's a great point, but have you considered...").
--   When using `conclude_viva`, ensure the `strong_points` and `areas_of_improvement` are specific to the topics discussed, not generic advice.
--   **CRITICAL:** You MUST speak your concluding remarks BEFORE calling the `conclude_viva` tool. Do not call the tool silently.
-"""
-        return system_instruction.strip()
+        return build_assessment_instruction(viva_request)
 
     # ------------------------------------------------------------------
     # Ephemeral Token Creation

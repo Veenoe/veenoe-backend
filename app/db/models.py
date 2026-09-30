@@ -43,6 +43,9 @@ class VivaFeedback(BaseModel):
         description="List of strong concepts demonstrated by the student",
     )
 
+    next_steps: list[str] = Field(default_factory=list)
+    coverage_note: str | None = None
+
     areas_of_improvement: List[str] = Field(
         default_factory=list,
         description="List of concepts where the student needs improvement",

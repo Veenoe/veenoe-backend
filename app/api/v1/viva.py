@@ -134,6 +134,8 @@ async def conclude_viva(
             summary=request.summary,
             strong_points=request.strong_points,
             areas_of_improvement=request.areas_of_improvement,
+            next_steps=request.next_steps,
+            coverage_note=request.coverage_note,
             user_id=current_user.user_id,
         )
         return ConcludeVivaResponse(**result)
@@ -142,11 +144,7 @@ async def conclude_viva(
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
-        logger.exception(
-            "Error concluding viva %s for user %s",
-            request.viva_session_id,
-            current_user.user_id,
-        )
+        logger.error("event=viva_conclude_failed error_type=%s", type(e).__name__)
         raise HTTPException(
             status_code=500,
             detail="Failed to conclude session. Please try again.",
