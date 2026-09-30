@@ -3,9 +3,13 @@ This module defines the Pydantic schemas for the API.
 These schemas act as the data contracts for API requests and responses.
 """
 
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel, Field, StringConstraints
+from typing import Annotated, List, Optional
 import datetime
+
+ReportPoint = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=600)
+]
 
 
 # --- Shared Models ---
@@ -14,6 +18,8 @@ class VivaFeedback(BaseModel):
     summary: str
     strong_points: List[str]
     areas_of_improvement: List[str]
+    next_steps: list[str] = Field(default_factory=list)
+    coverage_note: str | None = None
 
 
 # == Viva Start Schemas ==
@@ -51,9 +57,11 @@ class VivaStartResponse(BaseModel):
 class ConcludeVivaRequest(BaseModel):
     viva_session_id: str
     score: int = Field(..., ge=0, le=10)
-    summary: str
-    strong_points: List[str]
-    areas_of_improvement: List[str]
+    summary: str = Field(..., min_length=1, max_length=2000)
+    strong_points: list[ReportPoint] = Field(..., max_length=5)
+    areas_of_improvement: list[ReportPoint] = Field(..., max_length=5)
+    next_steps: list[ReportPoint] = Field(default_factory=list, max_length=3)
+    coverage_note: ReportPoint | None = None
 
 
 class ConcludeVivaResponse(BaseModel):

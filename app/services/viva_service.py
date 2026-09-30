@@ -115,6 +115,8 @@ class VivaService:
         strong_points: List[str],
         areas_of_improvement: List[str],
         user_id: str,
+        next_steps: List[str] | None = None,
+        coverage_note: str | None = None,
     ) -> dict:
         """
         Finalize a viva session by attaching AI-generated feedback,
@@ -154,6 +156,8 @@ class VivaService:
             summary=summary,
             strong_points=strong_points,
             areas_of_improvement=areas_of_improvement,
+            next_steps=next_steps or [],
+            coverage_note=coverage_note,
         )
 
         result = await VivaSession.get_motor_collection().update_one(
@@ -249,7 +253,7 @@ class VivaService:
         if not session:
             raise ValueError(f"Viva session {session_id} not found")
 
-        # Pydantic model handles feedback serialization automatically.
+        # Storage and response feedback are distinct Pydantic models.
         return {
             "viva_session_id": str(session.id),
             "student_name": session.student_name,
@@ -259,7 +263,7 @@ class VivaService:
             "started_at": session.started_at,
             "ended_at": session.ended_at,
             "status": session.status,
-            "feedback": session.feedback,
+            "feedback": session.feedback.model_dump() if session.feedback else None,
         }
 
     # ----------------------------------------------------------------------

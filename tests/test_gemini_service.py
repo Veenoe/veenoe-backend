@@ -197,6 +197,13 @@ def test_pinned_sdk_serializes_effective_vad_token_setup(monkeypatch):
     voice = setup["generationConfig"]["speechConfig"]["voice_config"]
     assert voice["prebuilt_voice_config"]["voice_name"] == "Kore"
     assert setup["tools"][0]["functionDeclarations"][0]["behavior"] == "BLOCKING"
+    parameters = setup["tools"][0]["functionDeclarations"][0]["parameters"]
+    assert set(parameters["required"]) == {
+        "score", "summary", "strong_points", "areas_of_improvement",
+        "next_steps", "coverage_note",
+    }
+    assert set(parameters["properties"]) == set(parameters["required"])
+    assert "meaningful hints" in parameters["properties"]["summary"]["description"]
     detection = setup["realtimeInputConfig"]["automatic_activity_detection"]
     assert detection == {
         "disabled": False,
