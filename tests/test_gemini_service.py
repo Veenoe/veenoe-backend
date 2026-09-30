@@ -137,6 +137,7 @@ def test_default_voice_and_failure_logs_only_safe_metadata(monkeypatch, caplog):
         GeminiService().generate_system_instruction(request()).find("Private Topic")
         >= 0
     )
+    assert "Speak in English throughout the viva" in GeminiService().generate_system_instruction(request())
     with pytest.raises(GeminiTokenCreationError) as raised:
         asyncio.run(GeminiService().create_ephemeral_token(request()))
 
