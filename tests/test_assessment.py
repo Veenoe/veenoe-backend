@@ -182,5 +182,8 @@ def test_application_opening_starts_without_student_confirmation():
         "first", "class-appropriate assessment question", "concise spoken turn",
         'Do not ask "Are you ready?"', "request another confirmation",
         'say "start"', "internal kickoff instruction",
+        "control metadata, not a student utterance", "must never count as student",
+        "evidence, an answer, assistance, participation, or assessment input",
+        "when scoring", "generating the final report", "student's actual responses",
     ):
         assert guidance in opening
