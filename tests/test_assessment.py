@@ -171,3 +171,19 @@ def test_actionable_report_fields_persist_and_read_with_existing_feedback():
     request = ConcludeVivaRequest(viva_session_id=SESSION_ID, **values)
     stored = StoredFeedback.model_validate(request.model_dump(exclude={"viva_session_id"}))
     assert VivaFeedback.model_validate(stored.model_dump()).model_dump() == values
+
+
+def test_application_opening_starts_without_student_confirmation():
+    from app.services.assessment_prompt import ASSESSMENT_PROTOCOL
+
+    opening = ASSESSMENT_PROTOCOL.split("## Session opening\n")[1].split("\n## ")[0]
+    for guidance in (
+        "application initiates", "begin immediately", "Briefly greet",
+        "first", "class-appropriate assessment question", "concise spoken turn",
+        'Do not ask "Are you ready?"', "request another confirmation",
+        'say "start"', "internal kickoff instruction",
+        "control metadata, not a student utterance", "must never count as student",
+        "evidence, an answer, assistance, participation, or assessment input",
+        "when scoring", "generating the final report", "student's actual responses",
+    ):
+        assert guidance in opening
