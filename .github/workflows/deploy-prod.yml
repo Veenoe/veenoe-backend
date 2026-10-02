@@ -15,18 +15,18 @@ jobs:
       contents: read
 
     steps:
-      - name: Enforce main branch deployment policy
+      - name: Enforce master branch deployment policy
         run: |
           echo "Evaluating target branch: ${GITHUB_REF}"
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+          if [ "${GITHUB_REF}" != "refs/heads/master" ]; then
             echo "=================================================================" >&2
-            echo "ERROR: Production deployments are strictly restricted to 'main'!" >&2
+            echo "ERROR: Production deployments are strictly restricted to 'master'!" >&2
             echo "Attempted execution from branch: ${GITHUB_REF}" >&2
             echo "Production deployment rejected." >&2
             echo "=================================================================" >&2
             exit 1
           fi
-          echo "Validation successful: Executing production deployment from 'main'."
+          echo "Validation successful: Executing production deployment from 'master'."
 
   verify:
     name: Build and Verify Production Artifact

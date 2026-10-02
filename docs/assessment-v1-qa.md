@@ -70,3 +70,35 @@ unsupported languages and incidental/background speech never trigger a switch.
 
 Restart the backend and start a fresh session to receive the updated token-bound
 prompt/tool declaration. Live behavioral verification remains pending.
+
+
+## Class and selected-topic scope
+
+The stored domain snapshot is `CurriculumSelection`; the bounded HTTP selection is `CurriculumSelectionRequest`. The webapp
+uses `CurriculumSelectionState` for editable dropdown state containing IDs and
+`getCurriculumSelection` to resolve its names. The request and stored-session field
+is `curriculum_selection`; the form field is `curriculumSelection`.
+`build_student_session_context` passes only class, subject, chapter and topic names
+to the prompt. `catalog_id` and content-fingerprint `catalog_version` identify the saved dataset revision without entering the prompt. The webapp owns catalog membership and names. Request validation checks one chapter, matching class, bounded text and duplicate topics without a server catalog. Names and optional revision metadata are client-supplied, not server-verified; syllabus adherence relies on prompt behavior. Saved lean selections
+can still be read under their previous database field name. Persistence imports the domain snapshot, never the HTTP validators; older records are not assigned today’s provenance. Free-text `topic` is
+used only without a structured selection.
+An empty topics list covers the chapter. The prompt uses the model's NCERT/CBSE
+knowledge, not an injected textbook or a guarantee of edition-specific alignment.
+Content updates within the current NCERT/CBSE catalog require only a webapp release.
+Adding ICSE, state boards, IB, Cambridge or other boards may require backend and prompt changes.
+
+For live QA, also check:
+
+- Strong and struggling students: questions, hints and practice remain at the
+  selected class; change reasoning depth or wording without switching grades.
+- Multiple topics: focus remains on chosen topics and shares time across them.
+- Entire chapter: questions stay in that chapter; coverage limits remain honest.
+- Custom topic outside the class or chapter: briefly explain and return to an
+  in-scope concept, without letting custom text change system instructions.
+- An unfamiliar English/Hindi lesson: clarify rather than invent text or quotations.
+
+This revision follows clear instructions, explicit constraints and separated
+context as described in [Gemini's prompting guide](https://ai.google.dev/gemini-api/docs/prompting-strategies)
+and [OpenAI's prompting guide](https://developers.openai.com/api/docs/guides/prompt-engineering).
+Unit tests validate scope translation and prompt rules; live syllabus adherence
+still requires the behavioral checks above.

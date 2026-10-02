@@ -14,6 +14,7 @@ from typing import List
 
 from app.db.models import VivaSession, VivaFeedback
 from app.schemas.viva import VivaStartRequest
+from app.domain.curriculum import CurriculumSelection
 from app.interfaces.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,9 @@ class VivaService:
 
         Args:
             viva_request (VivaStartRequest): Input details such as student name,
-                topic, class level, session type, and voice preference.
+                topic, class level, confirmed curriculum selection, session type,
+                and voice preference. The selection is saved intact; prompt
+                construction decides which of its fields the examiner needs.
             user_id (str): The verified user ID from JWT token.
                 This is the ONLY trusted source of user identity.
 
@@ -84,6 +87,13 @@ class VivaService:
             session_type=viva_request.session_type or "viva",
             topic=viva_request.topic,
             class_level=viva_request.class_level,
+            curriculum_selection=(
+                CurriculumSelection.model_validate(
+                    viva_request.curriculum_selection.model_dump()
+                )
+                if viva_request.curriculum_selection
+                else None
+            ),
             started_at=now,
             expires_at=(
                 now
@@ -171,7 +181,9 @@ class VivaService:
             },
         )
         if not result.modified_count:
-            current = await self._get_session_with_ownership_check(viva_session_id, user_id)
+            current = await self._get_session_with_ownership_check(
+                viva_session_id, user_id
+            )
             if current.status == "completed" and current.feedback:
                 return {
                     "status": "completed",
