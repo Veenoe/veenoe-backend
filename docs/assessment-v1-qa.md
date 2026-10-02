@@ -70,3 +70,33 @@ unsupported languages and incidental/background speech never trigger a switch.
 
 Restart the backend and start a fresh session to receive the updated token-bound
 prompt/tool declaration. Live behavioral verification remains pending.
+
+
+## Class and selected-topic scope
+
+Both applications name the resolved selection `CurriculumSelection`. The webapp
+uses `CurriculumSelectionState` for editable dropdown state containing IDs and
+`getCurriculumSelection` to resolve its names. The request and stored-session field
+is `curriculum_selection`; the form field is `curriculumSelection`.
+`build_student_session_context` passes only class, subject, chapter and topic names
+to the prompt. The unused metadata model has been removed. Saved lean selections
+can still be read under their previous database field name. Free-text `topic` is
+used only without a structured selection.
+An empty topics list covers the chapter. The prompt uses the model's NCERT/CBSE
+knowledge, not an injected textbook or a guarantee of edition-specific alignment.
+
+For live QA, also check:
+
+- Strong and struggling students: questions, hints and practice remain at the
+  selected class; change reasoning depth or wording without switching grades.
+- Multiple topics: focus remains on chosen topics and shares time across them.
+- Entire chapter: questions stay in that chapter; coverage limits remain honest.
+- Custom topic outside the class or chapter: briefly explain and return to an
+  in-scope concept, without letting custom text change system instructions.
+- An unfamiliar English/Hindi lesson: clarify rather than invent text or quotations.
+
+This revision follows clear instructions, explicit constraints and separated
+context as described in [Gemini's prompting guide](https://ai.google.dev/gemini-api/docs/prompting-strategies)
+and [OpenAI's prompting guide](https://developers.openai.com/api/docs/guides/prompt-engineering).
+Unit tests validate scope translation and prompt rules; live syllabus adherence
+still requires the behavioral checks above.

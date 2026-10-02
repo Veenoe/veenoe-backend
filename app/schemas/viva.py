@@ -3,7 +3,7 @@ This module defines the Pydantic schemas for the API.
 These schemas act as the data contracts for API requests and responses.
 """
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, ConfigDict, model_validator
 from typing import Annotated, List, Optional
 import datetime
 
@@ -25,6 +25,88 @@ class VivaFeedback(BaseModel):
 # == Viva Start Schemas ==
 
 
+CurriculumId = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=160,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    ),
+]
+CurriculumLabel = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
+]
+
+
+class SelectedTopic(BaseModel):
+    """One chosen catalog or custom topic; IDs identify choices, names guide questions."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: CurriculumId
+    name: CurriculumLabel
+
+    @model_validator(mode="after")
+    def valid_custom_topic(self):
+        """Enforce the UI text limit for custom topics, identified by their reserved ID prefix."""
+        if self.id.startswith("custom-topic-") and (
+            len(self.name) > 100 or any(ord(c) < 32 or ord(c) == 127 for c in self.name)
+        ):
+            raise ValueError(
+                "Custom topics must be a single line of at most 100 characters"
+            )
+        return self
+
+
+class SelectedChapter(BaseModel):
+    """A chapter and its focus topics; an empty list selects the whole chapter."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: CurriculumId
+    name: CurriculumLabel
+    # No chosen topics means the entire chapter, rather than an empty assessment.
+    topics: list[SelectedTopic] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def unique_topics(self):
+        """Reject repeated IDs and case-insensitive custom duplicates; cap custom topics at 20."""
+        if len({topic.id for topic in self.topics}) != len(self.topics):
+            raise ValueError("Topic IDs must be unique within a chapter")
+        custom = [
+            topic.name.casefold()
+            for topic in self.topics
+            if topic.id.startswith("custom-topic-")
+        ]
+        if len(custom) > 20 or len(set(custom)) != len(custom):
+            raise ValueError(
+                "Custom topics must be unique, with at most 20 per chapter"
+            )
+        return self
+
+
+class CurriculumSelection(BaseModel):
+    """Names and IDs needed to persist selection and build the examiner scope.
+
+    Unknown metadata is rejected to keep this contract lean. Parent membership is
+    resolved by the frontend catalog; this model validates shape and bounds, not
+    whether a topic belongs to an official syllabus. The start request separately
+    enforces one chapter, allowing existing multi-chapter selections to be read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    class_level: int = Field(ge=5, le=12, strict=True)
+    subject_id: CurriculumId
+    subject_name: CurriculumLabel
+    chapters: list[SelectedChapter] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def unique_chapters(self):
+        """Keep chapter identities unambiguous when reading or validating a selection."""
+        if len({chapter.id for chapter in self.chapters}) != len(self.chapters):
+            raise ValueError("Chapter IDs must be unique")
+        return self
+
+
 class VivaStartRequest(BaseModel):
     """
     Request to start a new viva session.
@@ -40,6 +122,22 @@ class VivaStartRequest(BaseModel):
     voice_name: Optional[str] = Field(default="Kore")
     enable_thinking: Optional[bool] = Field(default=True)
     thinking_budget: Optional[int] = Field(default=1024)
+    curriculum_selection: CurriculumSelection | None = None
+
+    @model_validator(mode="after")
+    def validate_selection_class(self):
+        """Require one chapter and one consistent class so the examiner gets a single scope."""
+        # Stored selections can contain more chapters; each new viva accepts one.
+        if (
+            isinstance(self.curriculum_selection, CurriculumSelection)
+            and len(self.curriculum_selection.chapters) != 1
+        ):
+            raise ValueError("Select exactly one chapter for a viva")
+        if self.curriculum_selection and self.class_level != str(
+            self.curriculum_selection.class_level
+        ):
+            raise ValueError("Class level must match the curriculum selection")
+        return self
 
 
 class VivaStartResponse(BaseModel):

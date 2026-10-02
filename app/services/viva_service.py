@@ -67,7 +67,9 @@ class VivaService:
 
         Args:
             viva_request (VivaStartRequest): Input details such as student name,
-                topic, class level, session type, and voice preference.
+                topic, class level, confirmed curriculum selection, session type,
+                and voice preference. The selection is saved intact; prompt
+                construction decides which of its fields the examiner needs.
             user_id (str): The verified user ID from JWT token.
                 This is the ONLY trusted source of user identity.
 
@@ -84,6 +86,7 @@ class VivaService:
             session_type=viva_request.session_type or "viva",
             topic=viva_request.topic,
             class_level=viva_request.class_level,
+            curriculum_selection=viva_request.curriculum_selection,
             started_at=now,
             expires_at=(
                 now
@@ -171,7 +174,9 @@ class VivaService:
             },
         )
         if not result.modified_count:
-            current = await self._get_session_with_ownership_check(viva_session_id, user_id)
+            current = await self._get_session_with_ownership_check(
+                viva_session_id, user_id
+            )
             if current.status == "completed" and current.feedback:
                 return {
                     "status": "completed",

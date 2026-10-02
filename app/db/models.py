@@ -7,9 +7,10 @@ associated feedback are stored, validated, and retrieved from the database.
 """
 
 from beanie import Document, Indexed
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from typing import List, Optional
 import datetime
+from app.schemas.viva import CurriculumSelection
 
 
 class VivaFeedback(BaseModel):
@@ -66,7 +67,9 @@ class VivaSession(Document):
         title (str): Title of the session (e.g., "Python Basics Viva").
         session_type (str): Either "viva" or "learn"; defaults to "viva".
         topic (str): Subject/topic of the session; indexed for improved query performance.
-        class_level (int): Class or grade level of the student; indexed.
+        class_level (str): Class or grade level of the student; indexed.
+        curriculum_selection: Confirmed subject, chapter and topic choices; optional
+            for sessions started from a free-text topic.
         started_at (datetime): UTC timestamp when the session began.
         ended_at (Optional[datetime]): UTC timestamp when the session ended.
         status (str): Current session state — "in_progress", "completed", or "abandoned".
@@ -82,6 +85,11 @@ class VivaSession(Document):
     session_type: str = "viva"  # Determines workflow; may be "viva" or "learn"
     topic: Indexed(str)  # Indexed for quicker topic-based retrievals
     class_level: Indexed(str)  # Indexed for level-based filtering
+    # Read selections saved before the field rename; writes use curriculum_selection.
+    curriculum_selection: CurriculumSelection | None = Field(
+        default=None,
+        validation_alias=AliasChoices("curriculum_selection", "curriculum_context"),
+    )
 
     # Timestamp tracking
     started_at: datetime.datetime = Field(
@@ -111,4 +119,5 @@ class VivaSession(Document):
         Defines the MongoDB collection name where VivaSession documents
         are stored. This ensures consistency across environments and deployments.
         """
+
         name = "viva_sessions"  # Collection name in MongoDB
