@@ -84,6 +84,8 @@ can still be read under their previous database field name. Persistence imports 
 used only without a structured selection.
 An empty topics list covers the chapter. The prompt uses the model's NCERT/CBSE
 knowledge, not an injected textbook or a guarantee of edition-specific alignment.
+Content updates within the current NCERT/CBSE catalog require only a webapp release.
+Adding ICSE, state boards, IB, Cambridge or other boards may require backend and prompt changes.
 
 For live QA, also check:
 
