@@ -6,6 +6,7 @@ These schemas act as the data contracts for API requests and responses.
 from pydantic import BaseModel, Field, StringConstraints, ConfigDict, model_validator
 from typing import Annotated, List, Optional
 import datetime
+from app.domain import curriculum as curriculum_domain
 
 ReportPoint = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=600)
@@ -39,7 +40,7 @@ CurriculumLabel = Annotated[
 ]
 
 
-class SelectedTopic(BaseModel):
+class SelectedTopic(curriculum_domain.SelectedTopic):
     """One chosen catalog or custom topic; IDs identify choices, names guide questions."""
 
     model_config = ConfigDict(extra="forbid")
@@ -58,7 +59,7 @@ class SelectedTopic(BaseModel):
         return self
 
 
-class SelectedChapter(BaseModel):
+class SelectedChapter(curriculum_domain.SelectedChapter):
     """A chapter and its focus topics; an empty list selects the whole chapter."""
 
     model_config = ConfigDict(extra="forbid")
@@ -84,16 +85,16 @@ class SelectedChapter(BaseModel):
         return self
 
 
-class CurriculumSelection(BaseModel):
-    """Names and IDs needed to persist selection and build the examiner scope.
+class CurriculumSelectionRequest(curriculum_domain.CurriculumSelection):
+    """Validate request shape without coupling the API to the webapp's catalog.
 
-    Unknown metadata is rejected to keep this contract lean. Parent membership is
-    resolved by the frontend catalog; this model validates shape and bounds, not
-    whether a topic belongs to an official syllabus. The start request separately
-    enforces one chapter, allowing existing multi-chapter selections to be read.
+    Names and optional revision metadata are supplied by the client. They record
+    the requested scope, not a server-verified syllabus or textbook edition.
     """
 
     model_config = ConfigDict(extra="forbid")
+    catalog_id: CurriculumId | None = None
+    catalog_version: CurriculumId | None = None
     class_level: int = Field(ge=5, le=12, strict=True)
     subject_id: CurriculumId
     subject_name: CurriculumLabel
@@ -115,21 +116,23 @@ class VivaStartRequest(BaseModel):
     JWT token to prevent client-side spoofing.
     """
 
-    student_name: str = Field(..., example="John Doe")
+    student_name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+    ] = Field(..., example="John Doe")
     topic: str = Field(..., example="Python Programming")
     class_level: str = Field(..., example="12")
     session_type: Optional[str] = Field(default="viva")
     voice_name: Optional[str] = Field(default="Kore")
     enable_thinking: Optional[bool] = Field(default=True)
     thinking_budget: Optional[int] = Field(default=1024)
-    curriculum_selection: CurriculumSelection | None = None
+    curriculum_selection: CurriculumSelectionRequest | None = None
 
     @model_validator(mode="after")
     def validate_selection_class(self):
         """Require one chapter and one consistent class so the examiner gets a single scope."""
         # Stored selections can contain more chapters; each new viva accepts one.
         if (
-            isinstance(self.curriculum_selection, CurriculumSelection)
+            isinstance(self.curriculum_selection, CurriculumSelectionRequest)
             and len(self.curriculum_selection.chapters) != 1
         ):
             raise ValueError("Select exactly one chapter for a viva")
@@ -137,6 +140,15 @@ class VivaStartRequest(BaseModel):
             self.curriculum_selection.class_level
         ):
             raise ValueError("Class level must match the curriculum selection")
+        if self.curriculum_selection:
+            # Keep history titles aligned with the same client-supplied scope
+            # used by the prompt, instead of a competing free-text topic.
+            chapter = self.curriculum_selection.chapters[0]
+            self.topic = chapter.name + (
+                ": " + ", ".join(t.name for t in chapter.topics)
+                if chapter.topics
+                else ""
+            )
         return self
 
 

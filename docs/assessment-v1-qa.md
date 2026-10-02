@@ -74,13 +74,13 @@ prompt/tool declaration. Live behavioral verification remains pending.
 
 ## Class and selected-topic scope
 
-Both applications name the resolved selection `CurriculumSelection`. The webapp
+The stored domain snapshot is `CurriculumSelection`; the bounded HTTP selection is `CurriculumSelectionRequest`. The webapp
 uses `CurriculumSelectionState` for editable dropdown state containing IDs and
 `getCurriculumSelection` to resolve its names. The request and stored-session field
 is `curriculum_selection`; the form field is `curriculumSelection`.
 `build_student_session_context` passes only class, subject, chapter and topic names
-to the prompt. The unused metadata model has been removed. Saved lean selections
-can still be read under their previous database field name. Free-text `topic` is
+to the prompt. `catalog_id` and content-fingerprint `catalog_version` identify the saved dataset revision without entering the prompt. The webapp owns catalog membership and names. Request validation checks one chapter, matching class, bounded text and duplicate topics without a server catalog. Names and optional revision metadata are client-supplied, not server-verified; syllabus adherence relies on prompt behavior. Saved lean selections
+can still be read under their previous database field name. Persistence imports the domain snapshot, never the HTTP validators; older records are not assigned today’s provenance. Free-text `topic` is
 used only without a structured selection.
 An empty topics list covers the chapter. The prompt uses the model's NCERT/CBSE
 knowledge, not an injected textbook or a guarantee of edition-specific alignment.

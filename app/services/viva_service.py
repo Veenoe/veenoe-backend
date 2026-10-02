@@ -14,6 +14,7 @@ from typing import List
 
 from app.db.models import VivaSession, VivaFeedback
 from app.schemas.viva import VivaStartRequest
+from app.domain.curriculum import CurriculumSelection
 from app.interfaces.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,13 @@ class VivaService:
             session_type=viva_request.session_type or "viva",
             topic=viva_request.topic,
             class_level=viva_request.class_level,
-            curriculum_selection=viva_request.curriculum_selection,
+            curriculum_selection=(
+                CurriculumSelection.model_validate(
+                    viva_request.curriculum_selection.model_dump()
+                )
+                if viva_request.curriculum_selection
+                else None
+            ),
             started_at=now,
             expires_at=(
                 now

@@ -10,7 +10,7 @@ from beanie import Document, Indexed
 from pydantic import AliasChoices, BaseModel, Field
 from typing import List, Optional
 import datetime
-from app.schemas.viva import CurriculumSelection
+from app.domain.curriculum import CurriculumSelection
 
 
 class VivaFeedback(BaseModel):
