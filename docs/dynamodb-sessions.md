@@ -190,6 +190,13 @@ so it cannot test a workstation-only diff. When ready, the operator can commit
 and push this branch without merging it; no commit, push, or deployment is made
 as part of this documentation update.
 
+Use Terraform 1.13.4 to match Checks and both deployment workflows. The minimum
+supported version is 1.11.4: Terraform 1.11.0's mock provider incorrectly returns
+write-only SSM fields in plans, failing these tests even though real secrets are
+not being read. Keep `value_wo` secret handling and mock tests intact rather than
+working around the issue by persisting secrets or skipping verification. See
+[HashiCorp's fix](https://github.com/hashicorp/terraform/pull/36824).
+
 ### 1. Local automated checks (no AWS resources)
 
 From PowerShell in `D:\Veenoe\veenoe-backend`, with Python 3.12 and the development
