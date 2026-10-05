@@ -27,24 +27,11 @@ def test_application_import_and_metadata():
 
 
 def test_settings_environment_variable_contract():
-    """
-    Verify that Settings fields exactly match the documented Lambda environment variable contract.
-    Confirms MONGO_URI and MONGO_DB_NAME (NOT MONGODB_URI or MONGODB_DB_NAME) are enforced.
-    """
     from app.core.config import Settings
 
-    fields = set(Settings.model_fields.keys())
-    assert "MONGO_URI" in fields, "Settings must have MONGO_URI"
-    assert "MONGO_DB_NAME" in fields, "Settings must have MONGO_DB_NAME"
-    assert "GOOGLE_API_KEY" in fields, "Settings must have GOOGLE_API_KEY"
-    assert "CLERK_SECRET_KEY" in fields, "Settings must have CLERK_SECRET_KEY"
-    assert "FRONTEND_URL" in fields, "Settings must have FRONTEND_URL"
-    assert "CORS_ORIGINS" in fields, "Settings must have CORS_ORIGINS"
-
-    assert "MONGODB_URI" not in fields, "MONGODB_URI is not part of Settings contract"
-    assert (
-        "MONGODB_DB_NAME" not in fields
-    ), "MONGODB_DB_NAME is not part of Settings contract"
+    fields = set(Settings.model_fields)
+    assert {"DYNAMODB_TABLE_NAME", "GOOGLE_API_KEY", "CLERK_SECRET_KEY"} <= fields
+    assert not {"MONGO_URI", "MONGO_DB_NAME"} & fields
 
 
 def test_root_health_endpoint():
@@ -74,7 +61,9 @@ def test_cors_preflight_production_frontend():
         },
     )
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "https://app.veenoe.com"
+    assert (
+        response.headers.get("access-control-allow-origin") == "https://app.veenoe.com"
+    )
     assert response.headers.get("access-control-allow-credentials") == "true"
 
 
@@ -92,7 +81,10 @@ def test_cors_preflight_vercel_preview():
         },
     )
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "https://veenoe-web-preview-123.vercel.app"
+    assert (
+        response.headers.get("access-control-allow-origin")
+        == "https://veenoe-web-preview-123.vercel.app"
+    )
     assert response.headers.get("access-control-allow-credentials") == "true"
 
 
@@ -146,6 +138,11 @@ def test_lambda_zip_application_code_present():
         assert "app/core/runtime_config.py" in names
         assert "app/api/api.py" in names
         assert "app/db/database.py" in names
+        assert "app/db/session_repository.py" in names
+        assert not any(
+            name.startswith(("motor/", "beanie/", "pymongo/", "bson/"))
+            for name in names
+        )
 
 
 def test_lambda_zip_boto3_present():

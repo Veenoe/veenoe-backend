@@ -252,6 +252,10 @@ data "aws_iam_policy_document" "dev_app_deploy" {
       "dynamodb:UpdateTable",
       "dynamodb:DeleteTable",
       "dynamodb:DescribeTable",
+      # Terraform reads disabled backup/TTL settings during refresh. These read
+      # permissions do not enable either feature or permit creating backups.
+      "dynamodb:DescribeContinuousBackups",
+      "dynamodb:DescribeTimeToLive",
       "dynamodb:TagResource",
       "dynamodb:UntagResource",
       "dynamodb:ListTagsOfResource"
@@ -520,6 +524,10 @@ data "aws_iam_policy_document" "prod_app_deploy" {
       "dynamodb:UpdateTable",
       "dynamodb:DeleteTable",
       "dynamodb:DescribeTable",
+      # Keep PROD refresh compatible with the provider even when backups and TTL
+      # are omitted; describing a setting does not turn that feature on.
+      "dynamodb:DescribeContinuousBackups",
+      "dynamodb:DescribeTimeToLive",
       "dynamodb:TagResource",
       "dynamodb:UntagResource",
       "dynamodb:ListTagsOfResource"

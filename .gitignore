@@ -21,6 +21,7 @@ __pycache__/
 .env
 .env.*
 *.env
+!.env.example
 
 # --- IDE & Editor Config ---
 # Ignore common IDE and editor-specific files

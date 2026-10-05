@@ -29,7 +29,7 @@ from fastapi import Depends
 from app.interfaces.llm_client import LLMClient
 from app.services.gemini_service import GeminiService
 from app.services.viva_service import VivaService
-from app.db.database import init_db
+from app.db.database import init_db, get_repository
 
 # Re-export authentication dependencies for easy import in routes
 from app.core.auth import (
@@ -65,22 +65,15 @@ def get_llm_service() -> LLMClient:
 # Viva Service Provider
 # ----------------------------------------------------------------------
 async def get_viva_service(
+    current_user: CurrentUser,
     llm_service: Annotated[LLMClient, Depends(get_llm_service)],
 ) -> VivaService:
     """
-    Construct a VivaService instance with the injected LLM client.
+    Wire the lifecycle service after authentication has succeeded.
 
-    This function demonstrates constructor-based dependency wiring,
-    making VivaService fully testable and independent of concrete LLM providers.
-
-    FastAPI automatically resolves the `llm_service` argument using DI.
-
-    Args:
-        llm_service (LLMClient):
-            The injected LLM client instance, provided by `get_llm_service`.
-
-    Returns:
-        VivaService: The VivaService instance fully wired with dependencies.
+    CurrentUser is deliberately a dependency even though its value is not used
+    here: unauthenticated requests must return 401 before database initialization.
+    SDK initialization runs off the event loop; requests reuse the cached client.
     """
     await init_db()
-    return VivaService(llm_client=llm_service)
+    return VivaService(llm_client=llm_service, repository=get_repository())

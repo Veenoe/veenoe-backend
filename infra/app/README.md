@@ -55,10 +55,8 @@ deployments continue through GitHub Actions OIDC and Terraform.
 - **DEV-Only Prototype Strategy**: Parameter resources are provisioned strictly for DEV (`count = var.environment == "dev" ? 1 : 0`) in `infra/app/secrets.tf`. No PROD parameters are created or managed by Terraform under this prototype mechanism.
 - **Harmless Configuration Placeholders**: Terraform configuration files (`secrets.tf`), variables, and commits contain only harmless fixed placeholder strings (`VEENOE_REPLACE_ME`). Real credentials never exist in Git, `.tfvars`, or deployment inputs.
 - **Manual Out-of-Band Population**: After initial deployment, the operator manually writes real credential values directly into AWS Systems Manager Parameter Store via the AWS Management Console or AWS CLI.
-- **Drift Protection via `ignore_changes`**: Each `aws_ssm_parameter` resource declares `lifecycle { ignore_changes = [value] }`. This prevents Terraform from planning to overwrite or revert externally updated parameter values during subsequent runs.
-- **Terraform State Exposure Caveat**: Declaring `lifecycle { ignore_changes = [value] }` prevents Terraform from planning to overwrite an externally changed value, but it does **NOT** guarantee that real secret values can never appear in remote Terraform state. Terraform refresh operations observe remote resource attributes, meaning real parameter values may become represented in remote Terraform state (`.tfstate`) after subsequent Terraform operations.
-- **S3 State Backend Sensitivity**: Because remote state may capture refreshed parameter attributes, the S3 remote state bucket (`veenoe-terraform-state-165835313361`) and state files must be treated as sensitive, protected by strict least-privilege IAM policies, encryption at rest, and access auditing.
-- **Production Migration Path**: Before production release, this prototype strategy must be migrated to a state-safe approach—such as Terraform 1.11+ write-only attribute support (`value_wo`) or dedicated out-of-band secret management—after separately validating Terraform CLI and AWS provider compatibility.
+- **Write-only secret placeholders**: Google and Clerk SecureString resources use Terraform 1.11 `value_wo` and ignore changes to `value_wo` / `value_wo_version`. Operator-populated secret values are not reverted and are not read into state by these write-only attributes.
+- **State security**: Existing state history still needs encryption and least-privilege access. PROD secrets are populated separately under `/veenoe/prod` before deploying PROD.
 - **Runtime Pointer**: Terraform sets a non-sensitive environment variable pointer on the Lambda function: `VEENOE_SSM_PARAMETER_PREFIX = "/veenoe/${var.environment}"`.
 
 ### 2. AWS SSM Parameter Store Parameters
@@ -66,8 +64,6 @@ All parameters reside in **AWS Systems Manager Parameter Store** under the **Sta
 
 | Parameter Name | SSM Type | Initial Value | Sensitivity | Destination Field |
 | :--- | :--- | :--- | :--- | :--- |
-| `/veenoe/dev/mongo_uri` | `SecureString` | `VEENOE_REPLACE_ME` | Secret (post-replace) | `MONGO_URI` |
-| `/veenoe/dev/mongo_db_name` | `String` | `VEENOE_REPLACE_ME` | Non-Secret | `MONGO_DB_NAME` |
 | `/veenoe/dev/google_api_key` | `SecureString` | `VEENOE_REPLACE_ME` | Secret (post-replace) | `GOOGLE_API_KEY` |
 | `/veenoe/dev/clerk_secret_key` | `SecureString` | `VEENOE_REPLACE_ME` | Secret (post-replace) | `CLERK_SECRET_KEY` |
 
@@ -75,7 +71,7 @@ All parameters reside in **AWS Systems Manager Parameter Store** under the **Sta
 
 ### 3. Local Development vs. AWS Lambda Mode
 - **Local Development**: When `VEENOE_SSM_PARAMETER_PREFIX` is absent or unset, the application automatically reads configuration from `.env` or local environment variables via `pydantic-settings`. No AWS API calls are made.
-- **AWS Lambda Runtime**: When `VEENOE_SSM_PARAMETER_PREFIX=/veenoe/dev` is present, `app.core.runtime_config` issues a single batched `ssm:GetParameters` call with `WithDecryption=True` for the 4 exact parameter paths during application bootstrap (cold start).
+- **AWS Lambda Runtime**: The environment prefix selects the two exact Google and Clerk secret paths, retrieved in one decrypted `ssm:GetParameters` call during cold start. The table name is supplied directly by Terraform as a Lambda environment variable.
 
 ### 4. Cold-Start Caching & Secret Rotation
 - **Cached in Memory**: Configuration is instantiated once at module import during cold start and held in memory across warm invocations. No SSM calls occur during warm requests.
@@ -83,7 +79,7 @@ All parameters reside in **AWS Systems Manager Parameter Store** under the **Sta
 
 ### 5. IAM Runtime Boundaries
 - **Action**: `ssm:GetParameters` only.
-- **Resource ARNs**: Constrained strictly to the four exact parameter ARNs for the environment. No wildcards (`*`).
+- **Resource ARNs**: Constrained strictly to the two exact secret parameter ARNs for the environment. No wildcards (`*`).
 - **No KMS Policy**: Per AWS SSM guidance, the default AWS-managed `alias/aws/ssm` key decryption is granted implicitly via account membership and SSM parameter read access. No custom KMS key policy or `kms:Decrypt` statements are added.
 - **Cross-Environment Isolation**: The `dev` runtime role cannot access `/veenoe/prod/...` parameters, and vice versa.
 
@@ -150,3 +146,7 @@ To completely tear down the DEV application stack without touching the bootstrap
 terraform -chdir=infra/app destroy -var-file=dev.tfvars
 ```
 Never destroy `infra/bootstrap` during an application rollback.
+
+## DynamoDB sessions (VEENOE-10)
+
+`dynamodb.tf` creates the environment-specific session table and exact-table runtime IAM policy. Terraform passes `DYNAMODB_TABLE_NAME` to Lambda. The two obsolete DEV MongoDB SSM parameters are deleted during the Actions cutover; the DEV plan guard allows only those exact deletions. The runtime fetches only Google and Clerk secrets. See [the persistence and deployment runbook](../../docs/dynamodb-sessions.md), including bootstrap IAM prerequisites.

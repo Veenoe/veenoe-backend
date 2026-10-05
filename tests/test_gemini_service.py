@@ -77,8 +77,7 @@ def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplo
         == types.StartSensitivity.START_SENSITIVITY_HIGH
     )
     assert (
-        detection.end_of_speech_sensitivity
-        == types.EndSensitivity.END_SENSITIVITY_LOW
+        detection.end_of_speech_sensitivity == types.EndSensitivity.END_SENSITIVITY_LOW
     )
     assert detection.prefix_padding_ms == 40
     assert detection.silence_duration_ms == 700
@@ -137,7 +136,10 @@ def test_default_voice_and_failure_logs_only_safe_metadata(monkeypatch, caplog):
         GeminiService().generate_system_instruction(request()).find("Private Topic")
         >= 0
     )
-    assert "Speak in English throughout the viva" in GeminiService().generate_system_instruction(request())
+    assert (
+        "Speak in English throughout the viva"
+        in GeminiService().generate_system_instruction(request())
+    )
     with pytest.raises(GeminiTokenCreationError) as raised:
         asyncio.run(GeminiService().create_ephemeral_token(request()))
 
@@ -175,9 +177,7 @@ def test_pinned_sdk_serializes_effective_vad_token_setup(monkeypatch):
     client = gemini_service.genai.Client(
         api_key="test_google_api_key", http_options={"api_version": "v1beta"}
     )
-    send = AsyncMock(
-        return_value=SimpleNamespace(body=b'{"name":"auth_tokens/test"}')
-    )
+    send = AsyncMock(return_value=SimpleNamespace(body=b'{"name":"auth_tokens/test"}'))
     monkeypatch.setattr(client._api_client, "async_request", send)
     monkeypatch.setattr(gemini_service.genai, "Client", lambda **_: client)
 
@@ -199,8 +199,12 @@ def test_pinned_sdk_serializes_effective_vad_token_setup(monkeypatch):
     assert setup["tools"][0]["functionDeclarations"][0]["behavior"] == "BLOCKING"
     parameters = setup["tools"][0]["functionDeclarations"][0]["parameters"]
     assert set(parameters["required"]) == {
-        "score", "summary", "strong_points", "areas_of_improvement",
-        "next_steps", "coverage_note",
+        "score",
+        "summary",
+        "strong_points",
+        "areas_of_improvement",
+        "next_steps",
+        "coverage_note",
     }
     assert set(parameters["properties"]) == set(parameters["required"])
     assert "meaningful hints" in parameters["properties"]["summary"]["description"]
@@ -219,17 +223,7 @@ def test_pinned_sdk_serializes_effective_vad_token_setup(monkeypatch):
 
 
 def test_start_response_exposes_only_safe_vad_profile_metadata(monkeypatch):
-    from app.services import viva_service as viva_service_module
     from app.services.viva_service import VivaService
-
-    class FakeVivaSession:
-        id = "507f1f77bcf86cd799439011"
-
-        def __init__(self, **_):
-            pass
-
-        async def insert(self):
-            pass
 
     class FakeLlmClient:
         async def create_ephemeral_token(self, _request):
@@ -241,10 +235,11 @@ def test_start_response_exposes_only_safe_vad_profile_metadata(monkeypatch):
                 "vad_profile": GEMINI_LIVE_CONFIG.vad_profile.name,
             }
 
-    monkeypatch.setattr(viva_service_module, "VivaSession", FakeVivaSession)
-
     async def service_dependency():
-        return VivaService(llm_client=FakeLlmClient())
+        return VivaService(
+            llm_client=FakeLlmClient(),
+            repository=SimpleNamespace(create_session=AsyncMock()),
+        )
 
     async def user_dependency():
         return SimpleNamespace(user_id="user_test_safe")
@@ -284,23 +279,14 @@ def test_start_endpoint_never_logs_upstream_exception_content(monkeypatch, caplo
         aio=SimpleNamespace(auth_tokens=SimpleNamespace(create=create))
     )
     monkeypatch.setattr(gemini_module.genai, "Client", lambda **_: client)
-    from app.services import viva_service as viva_service_module
-
-    class FakeVivaSession:
-        id = "507f1f77bcf86cd799439011"
-
-        def __init__(self, **_):
-            pass
-
-        async def insert(self):
-            pass
-
-    monkeypatch.setattr(viva_service_module, "VivaSession", FakeVivaSession)
 
     async def service_dependency():
         from app.services.viva_service import VivaService
 
-        return VivaService(llm_client=GeminiService())
+        return VivaService(
+            llm_client=GeminiService(),
+            repository=SimpleNamespace(create_session=AsyncMock()),
+        )
 
     async def user_dependency():
         return SimpleNamespace(user_id="user_test_safe")
@@ -322,9 +308,7 @@ def test_start_endpoint_never_logs_upstream_exception_content(monkeypatch, caplo
 
     create.assert_awaited_once()
     assert response.status_code == 500
-    assert response.json() == {
-        "detail": "Failed to start session. Please try again."
-    }
+    assert response.json() == {"detail": "Failed to start session. Please try again."}
     for private_value in (
         "test_google_api_key",
         "auth_tokens/example-secret",
@@ -370,9 +354,7 @@ def test_start_endpoint_handles_domain_token_error_without_logging_details(
         app.dependency_overrides.clear()
 
     assert response.status_code == 500
-    assert response.json() == {
-        "detail": "Failed to start session. Please try again."
-    }
+    assert response.json() == {"detail": "Failed to start session. Please try again."}
     assert "event=viva_start_failed" in caplog.text
     assert "error_type=GeminiTokenCreationError" in caplog.text
     for private_value in (

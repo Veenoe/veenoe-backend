@@ -3,10 +3,20 @@ This module defines the Pydantic schemas for the API.
 These schemas act as the data contracts for API requests and responses.
 """
 
-from pydantic import BaseModel, Field, StringConstraints, ConfigDict, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StringConstraints,
+    ConfigDict,
+    model_validator,
+    field_validator,
+)
 from typing import Annotated, List, Optional
 import datetime
 from app.domain import curriculum as curriculum_domain
+from app.db.models import SESSION_ID_PATTERN
+
+SessionId = Annotated[str, StringConstraints(pattern=SESSION_ID_PATTERN, max_length=53)]
 
 ReportPoint = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=600)
@@ -165,13 +175,21 @@ class VivaStartResponse(BaseModel):
 
 
 class ConcludeVivaRequest(BaseModel):
-    viva_session_id: str
+    viva_session_id: SessionId
     score: int = Field(..., ge=0, le=10)
     summary: str = Field(..., min_length=1, max_length=2000)
     strong_points: list[ReportPoint] = Field(..., max_length=5)
     areas_of_improvement: list[ReportPoint] = Field(..., max_length=5)
     next_steps: list[ReportPoint] = Field(default_factory=list, max_length=3)
     coverage_note: ReportPoint | None = None
+    transcript: str | None = Field(default=None, max_length=65536)
+
+    @field_validator("transcript")
+    @classmethod
+    def bounded_transcript(cls, value: str | None) -> str | None:
+        if value is not None and len(value.encode("utf-8")) > 65536:
+            raise ValueError("Transcript exceeds 64 KiB")
+        return value
 
 
 class ConcludeVivaResponse(BaseModel):
@@ -204,10 +222,12 @@ class VivaSessionDetailResponse(BaseModel):
     ended_at: Optional[datetime.datetime] = None
     status: str
     feedback: Optional[VivaFeedback] = None
+    transcript: str | None = None
 
 
 class HistoryResponse(BaseModel):
     sessions: list[VivaSessionSummary]
+    next_cursor: str | None = None
 
 
 class RenameSessionRequest(BaseModel):

@@ -9,8 +9,6 @@ Responsibilities:
    using a single batched GetParameters call with WithDecryption=True.
 4. Validate that all required parameters are present and non-empty (fail-closed).
 5. Map parameters to the existing application Settings contract keys:
-   - MONGO_URI
-   - MONGO_DB_NAME
    - GOOGLE_API_KEY
    - CLERK_SECRET_KEY
 6. Never log or leak secret values, connection strings, or full AWS API responses.
@@ -28,22 +26,16 @@ from botocore.exceptions import BotoCoreError, ClientError
 logger = logging.getLogger(__name__)
 
 # Exact parameter suffixes expected under VEENOE_SSM_PARAMETER_PREFIX
-PARAM_MONGO_URI = "mongo_uri"
-PARAM_MONGO_DB_NAME = "mongo_db_name"
 PARAM_GOOGLE_API_KEY = "google_api_key"
 PARAM_CLERK_SECRET_KEY = "clerk_secret_key"
 
 REQUIRED_PARAM_SUFFIXES = [
-    PARAM_MONGO_URI,
-    PARAM_MONGO_DB_NAME,
     PARAM_GOOGLE_API_KEY,
     PARAM_CLERK_SECRET_KEY,
 ]
 
 # Mapping from SSM parameter suffix to Settings field name
 SUFFIX_TO_SETTINGS_KEY = {
-    PARAM_MONGO_URI: "MONGO_URI",
-    PARAM_MONGO_DB_NAME: "MONGO_DB_NAME",
     PARAM_GOOGLE_API_KEY: "GOOGLE_API_KEY",
     PARAM_CLERK_SECRET_KEY: "CLERK_SECRET_KEY",
 }
@@ -75,14 +67,20 @@ def load_runtime_config() -> Dict[str, str]:
 
     # Build exact parameter names
     expected_names = [f"{prefix}/{suffix}" for suffix in REQUIRED_PARAM_SUFFIXES]
-    name_to_suffix = {f"{prefix}/{suffix}": suffix for suffix in REQUIRED_PARAM_SUFFIXES}
+    name_to_suffix = {
+        f"{prefix}/{suffix}": suffix for suffix in REQUIRED_PARAM_SUFFIXES
+    }
 
     logger.info(
         "Loading runtime configuration from AWS SSM Parameter Store under prefix: %s",
         prefix,
     )
 
-    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "ap-south-1"
+    region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or "ap-south-1"
+    )
 
     # Bounded timeouts and retries so SSM delays do not exhaust Lambda execution timeout
     sdk_config = Config(
@@ -156,5 +154,8 @@ def load_runtime_config() -> Dict[str, str]:
         settings_key = SUFFIX_TO_SETTINGS_KEY[suffix]
         config_dict[settings_key] = val
 
-    logger.info("Successfully loaded runtime configuration from AWS SSM (%d parameters)", len(config_dict))
+    logger.info(
+        "Successfully loaded runtime configuration from AWS SSM (%d parameters)",
+        len(config_dict),
+    )
     return config_dict

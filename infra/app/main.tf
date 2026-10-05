@@ -77,8 +77,6 @@ data "aws_iam_policy_document" "lambda_ssm_read" {
     effect  = "Allow"
     actions = ["ssm:GetParameters"]
     resources = [
-      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/${var.environment}/mongo_uri",
-      "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/${var.environment}/mongo_db_name",
       "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/${var.environment}/google_api_key",
       "arn:aws:ssm:${local.aws_region}:${local.account_id}:parameter/veenoe/${var.environment}/clerk_secret_key"
     ]
@@ -117,13 +115,15 @@ resource "aws_lambda_function" "backend" {
 
       # Application runtime configuration pointer (SSM Parameter Store)
       VEENOE_SSM_PARAMETER_PREFIX = "/veenoe/${var.environment}"
+      DYNAMODB_TABLE_NAME         = aws_dynamodb_table.sessions.name
     }
   }
 
   depends_on = [
     aws_cloudwatch_log_group.lambda,
     aws_iam_role_policy.lambda_logging,
-    aws_iam_role_policy.lambda_ssm_read
+    aws_iam_role_policy.lambda_ssm_read,
+    aws_iam_role_policy.lambda_sessions,
   ]
 }
 
