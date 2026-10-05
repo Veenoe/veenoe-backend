@@ -6,19 +6,19 @@
 # Drift on write-only secret values is intentionally ignored so operator updates
 # are not reverted, and real secrets never enter refreshed Terraform state.
 
-# Retire obsolete configuration without deleting operator-managed secrets.
+# Delete the obsolete DEV MongoDB parameters as part of the storage cutover.
 # These resources existed only in DEV; no MongoDB data is read or migrated.
 removed {
   from = aws_ssm_parameter.mongo_uri
   lifecycle {
-    destroy = false
+    destroy = true
   }
 }
 
 removed {
   from = aws_ssm_parameter.mongo_db_name
   lifecycle {
-    destroy = false
+    destroy = true
   }
 }
 

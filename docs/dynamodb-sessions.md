@@ -137,9 +137,14 @@ only GetItem, PutItem, UpdateItem, Query, and DeleteItem against their exact tab
 ARN. DeleteItem is needed by the existing delete endpoint. Runtime roles have no
 scan or table-management access. Existing separate DEV/PROD state and GitHub
 environments remain intact. SSM fetches only Google and Clerk secrets, with no
-MongoDB requirement. Obsolete DEV SSM resources are removed from management
-without deleting operator-owned secrets (`removed` blocks, `destroy = false`).
-Operators can retire those unused parameters separately; the runtime cannot read them.
+MongoDB requirement. Obsolete DEV SSM parameters `/veenoe/dev/mongo_uri` and
+`/veenoe/dev/mongo_db_name` are deleted through `removed` blocks with
+`destroy = true`. The DEV deployment guard allows only deletion of those exact
+resource addresses and names; replacements and other deletions remain blocked.
+This removes configuration keys, not the MongoDB database itself. If an earlier
+deployment already detached these parameters from state, the removed blocks cannot
+delete them: an authorized operator must first re-import them through the workflow
+or perform a separate, explicitly scoped cleanup.
 
 The existing bootstrap deployment policies need two additional scoped read
 actions, DescribeContinuousBackups and DescribeTimeToLive, because the locked AWS
@@ -247,8 +252,8 @@ type checks, formatting, and mock plans before proceeding.
 4. Open **Actions → Deploy Development → Run workflow**, choose
    `Veenoe-10-dynamodb-sessions`, and choose **PLAN**. Inspect the real state-aware
    plan: DEV table creation, DEV Lambda configuration, and scoped IAM changes.
-   Confirm PROD resources are absent and old MongoDB parameters are detached
-   without deletion. PLAN does not apply the infrastructure changes.
+   Confirm PROD resources are absent and only the two obsolete DEV MongoDB
+   parameters are marked for deletion. PLAN does not apply infrastructure changes.
 5. Run the same workflow on the same branch with **APPLY** after reviewing PLAN.
    APPLY generates and checks a fresh plan; inspect that run as well. It updates
    the shared DEV backend, so coordinate with other DEV users. Review its health,

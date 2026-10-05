@@ -149,4 +149,4 @@ Never destroy `infra/bootstrap` during an application rollback.
 
 ## DynamoDB sessions (VEENOE-10)
 
-`dynamodb.tf` creates the environment-specific session table and exact-table runtime IAM policy. Terraform passes `DYNAMODB_TABLE_NAME` to Lambda. MongoDB SSM containers are retired from state without deleting operator-owned secrets. The runtime fetches only Google and Clerk secrets. See [the persistence and deployment runbook](../../docs/dynamodb-sessions.md), including bootstrap IAM prerequisites.
+`dynamodb.tf` creates the environment-specific session table and exact-table runtime IAM policy. Terraform passes `DYNAMODB_TABLE_NAME` to Lambda. The two obsolete DEV MongoDB SSM parameters are deleted during the Actions cutover; the DEV plan guard allows only those exact deletions. The runtime fetches only Google and Clerk secrets. See [the persistence and deployment runbook](../../docs/dynamodb-sessions.md), including bootstrap IAM prerequisites.
