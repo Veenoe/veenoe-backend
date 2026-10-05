@@ -23,8 +23,8 @@ class VivaService:
     async def start_new_viva_session(
         self, viva_request: VivaStartRequest, user_id: str
     ) -> dict:
-        # A failed token request must not leave a session that was never usable.
         """Provision a usable credential before persisting the viva and its original deadline."""
+        # A failed token request must not leave a session that was never usable.
         token_data = await self.llm_client.create_ephemeral_token(viva_request)
         now = utc_now()
         session = VivaSession(
