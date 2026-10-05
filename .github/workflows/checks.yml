@@ -64,6 +64,10 @@ jobs:
           terraform -chdir=infra/app init -backend=false
           terraform -chdir=infra/app validate
 
+      - name: Test Terraform environment isolation
+        # Mocked plans exercise both environment configurations without AWS calls.
+        run: terraform -chdir=infra/app test
+
       - name: Verify clean working tree
         run: |
           if [ -n "$(git status --porcelain)" ]; then

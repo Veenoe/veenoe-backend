@@ -4,7 +4,7 @@
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=FastAPI&logoColor=white)
 ![Python](https://img.shields.io/badge/Python_3.11+-FFD43B?style=for-the-badge&logo=python&logoColor=306998)
-![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
+![DynamoDB](https://img.shields.io/badge/DynamoDB-4053D6?style=for-the-badge&logo=amazondynamodb&logoColor=white)
 ![Google Gemini](https://img.shields.io/badge/Gemini-8E75FF?style=for-the-badge&logo=googlegemini&logoColor=white)
 ![Clerk](https://img.shields.io/badge/Clerk-6C47FF?style=for-the-badge&logo=clerk&logoColor=white)
 
@@ -82,8 +82,8 @@ graph TB
         end
         
         subgraph "Data Layer"
-            MONGO[(MongoDB)]
-            BEANIE[Beanie ODM]
+            DYNAMO[(DynamoDB)]
+            REPO[Session Repository]
         end
     end
 
@@ -101,10 +101,10 @@ graph TB
     RATE --> VIVA
     
     VIVA --> GEMINI
-    VIVA --> BEANIE
+    VIVA --> REPO
     
     GEMINI -->|Ephemeral Token| GEMINI_API
-    BEANIE --> MONGO
+    REPO --> DYNAMO
 ```
 
 ### Request Flow Diagram
@@ -116,7 +116,7 @@ sequenceDiagram
     participant R as Rate Limiter
     participant S as VivaService
     participant G as GeminiService
-    participant DB as MongoDB
+    participant DB as DynamoDB
     participant AI as Gemini Live API
 
     Note over C,AI: Start Viva Session Flow
@@ -159,7 +159,7 @@ erDiagram
     }
     
     VIVA_SESSION {
-        ObjectId _id PK
+        string session_id PK
         string user_id FK
         string student_name
         string title
@@ -202,8 +202,9 @@ backend/
 │   │       └── dependencies.py # FastAPI auth dependencies
 │   │
 │   ├── db/                     # Data Layer
-│   │   ├── database.py         # MongoDB connection management
-│   │   └── models.py           # Beanie document models
+│   │   ├── database.py         # DynamoDB client lifecycle
+│   │   ├── models.py           # Session domain values
+│   │   └── session_repository.py # Owner-scoped conditional persistence
 │   │
 │   ├── schemas/                # Request/Response DTOs
 │   │   └── viva.py             # Viva Pydantic schemas
@@ -266,8 +267,8 @@ graph LR
 | Category | Technology | Purpose |
 |----------|------------|---------|
 | **Web Framework** | FastAPI 0.115+ | Async REST API with automatic OpenAPI docs |
-| **Database** | MongoDB | Document storage for session data |
-| **ODM** | Beanie | Async MongoDB object-document mapping |
+| **Database** | DynamoDB | Owner-scoped session storage |
+| **Data access** | boto3 repository | Strong reads and conditional writes |
 | **AI/ML** | Google Gemini 3.8 Live | Real-time audio conversation model |
 | **Authentication** | Clerk | JWT-based identity management |
 | **Rate Limiting** | SlowAPI | Request throttling and quota protection |
@@ -283,7 +284,7 @@ graph LR
 
 - Python 3.11 or higher
 - [uv](https://docs.astral.sh/uv/) - Fast Python package manager
-- MongoDB Atlas account (or local MongoDB)
+- DynamoDB Local for local development (or deployed DEV API)
 - Google AI Studio API key
 - Clerk account for authentication
 
@@ -314,9 +315,10 @@ graph LR
    
    Edit `.env` with your credentials:
    ```env
-   # MongoDB
-   MONGO_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/
-   MONGO_DB_NAME=veenoe_prod
+   # DynamoDB Local (create the table locally first)
+   DYNAMODB_TABLE_NAME=veenoe-local-sessions
+   DYNAMODB_ENDPOINT_URL=http://localhost:8000
+   AWS_REGION=ap-south-1
    
    # Google AI
    GOOGLE_API_KEY=your_google_ai_studio_key
@@ -350,7 +352,7 @@ graph LR
 
 ### Authentication
 
-All endpoints (except `/health` and public session details) require a valid JWT token:
+All session endpoints, including session details, require a valid JWT token:
 
 ```http
 Authorization: Bearer <clerk_jwt_token>
@@ -496,7 +498,7 @@ graph TB
 | **Protocol-based LLM Interface** | Enables hot-swapping AI providers without business logic changes |
 | **Service Layer Pattern** | Isolates business logic from HTTP transport, enabling reuse and testing |
 | **Clerk Authentication** | Enterprise-grade auth with minimal implementation overhead |
-| **MongoDB + Beanie** | Flexible schema for evolving session data with type-safe ODM |
+| **DynamoDB repository** | Owner/session keys support direct reads and chronological history without indexes |
 | **Ephemeral Tokens** | Client connects directly to Gemini without exposing API keys |
 | **User ID from JWT Only** | Prevents identity spoofing; server is single source of truth |
 
@@ -509,8 +511,8 @@ graph TB
 | API Key Exposure | Keys stored server-side; ephemeral tokens for client |
 | Identity Spoofing | User ID extracted from verified JWT only |
 | Rate Limit Bypass | IP-based limiting with SlowAPI |
-| Session Hijacking | Ownership validation on all mutations |
-| Database Injection | Beanie ODM with parameterized queries |
+| Session Hijacking | Owner-scoped keys on all reads and mutations |
+| Database Injection | Server-built owner keys and parameterized DynamoDB expressions |
 
 ---
 
@@ -519,3 +521,7 @@ graph TB
 Follow me on X: **[@kaushalkrsna](https://x.com/kaushalkrsna)**
 
 </div>
+
+## DynamoDB persistence (VEENOE-10)
+
+See [access patterns, key design, capacity choice, transcript limits, and deployment evidence](docs/dynamodb-sessions.md). History uses bounded pages with `next_cursor`; session details require ownership. MongoDB is not required.

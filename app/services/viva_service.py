@@ -1,92 +1,38 @@
-"""
-This module contains the core business logic for the Viva application.
-
-It follows dependency injection principles by accepting an LLMClient
-implementation at runtime, making the service decoupled, testable,
-and easy to extend when adding new LLM or model providers.
-"""
+"""Session lifecycle and assessment rules, independent of DynamoDB expressions."""
 
 import datetime
-import logging
-from bson import ObjectId
-from bson.errors import InvalidId
 from typing import List
 
-from app.db.models import VivaSession, VivaFeedback
-from app.schemas.viva import VivaStartRequest
+from app.db.models import VivaFeedback, VivaSession, new_session_id, utc_now
+from app.db.session_repository import SessionConflict, SessionRepository
 from app.domain.curriculum import CurriculumSelection
 from app.interfaces.llm_client import LLMClient
+from app.schemas.viva import VivaStartRequest
 
-logger = logging.getLogger(__name__)
-# The browser can disappear without sending a final request. Reconcile on reads
-# after the issued Live session's five-minute lifetime plus delivery grace.
 SESSION_EXPIRY_GRACE = datetime.timedelta(minutes=2)
-LEGACY_SESSION_LIFETIME = datetime.timedelta(minutes=7)
 
 
 class VivaService:
-    """
-    Service class encapsulating all business logic associated with viva sessions.
+    """Apply session business rules without exposing storage expressions to routes."""
 
-    Responsibilities:
-    - Start new viva sessions.
-    - Persist and conclude sessions with AI-generated feedback.
-    - Retrieve session metadata and history.
-    - Provide controlled operations such as renaming or deleting sessions.
-
-    This service acts as an intermediary between the presentation/API layer,
-    the LLMClient, and the database models. No direct AI or DB logic leaks
-    outside this class, maintaining clean architectural boundaries.
-    """
-
-    def __init__(self, llm_client: LLMClient) -> None:
-        """
-        Initialize VivaService with a dependency-injected LLM client.
-
-        Args:
-            llm_client (LLMClient): A concrete implementation of the
-                LLMClient protocol responsible for model interactions.
-        """
+    def __init__(self, llm_client: LLMClient, repository: SessionRepository) -> None:
         self.llm_client = llm_client
+        self.repository = repository
 
-    # ----------------------------------------------------------------------
-    # Start New Session
-    # ----------------------------------------------------------------------
     async def start_new_viva_session(
-        self,
-        viva_request: VivaStartRequest,
-        user_id: str,
+        self, viva_request: VivaStartRequest, user_id: str
     ) -> dict:
-        """
-        Create and persist a new viva session, then request an ephemeral
-        AI token to begin the interactive viva process.
-
-        This method:
-        - Creates a new VivaSession in the database.
-        - Requests an ephemeral token from the LLM client.
-        - Returns the session ID and AI connection parameters.
-
-        Args:
-            viva_request (VivaStartRequest): Input details such as student name,
-                topic, class level, confirmed curriculum selection, session type,
-                and voice preference. The selection is saved intact; prompt
-                construction decides which of its fields the examiner needs.
-            user_id (str): The verified user ID from JWT token.
-                This is the ONLY trusted source of user identity.
-
-        Returns:
-            dict: Metadata required by the client to join the live AI session.
-        """
-        # A token failure must not leave a session that was never usable.
+        # A failed token request must not leave a session that was never usable.
         token_data = await self.llm_client.create_ephemeral_token(viva_request)
-        now = datetime.datetime.now(tz=datetime.timezone.utc)
-        new_session = VivaSession(
+        now = utc_now()
+        session = VivaSession(
+            id=new_session_id(now),
+            user_id=user_id,
             student_name=viva_request.student_name,
-            user_id=user_id,  # From JWT, never from request
             title=viva_request.topic,
-            session_type=viva_request.session_type or "viva",
             topic=viva_request.topic,
             class_level=viva_request.class_level,
+            session_type=viva_request.session_type or "viva",
             curriculum_selection=(
                 CurriculumSelection.model_validate(
                     viva_request.curriculum_selection.model_dump()
@@ -95,28 +41,60 @@ class VivaService:
                 else None
             ),
             started_at=now,
-            expires_at=(
-                now
-                + datetime.timedelta(minutes=token_data["session_duration_minutes"])
-                + SESSION_EXPIRY_GRACE
-            ),
-            status="in_progress",
+            updated_at=now,
+            expires_at=now
+            + datetime.timedelta(minutes=token_data["session_duration_minutes"])
+            + SESSION_EXPIRY_GRACE,
         )
-        await new_session.insert()
-
+        await self.repository.create_session(session)
         return {
-            "viva_session_id": str(new_session.id),
+            "viva_session_id": session.id,
             "ephemeral_token": token_data["token"],
-            # Model name is now returned dynamically (no direct import dependency)
             "google_model": token_data.get("model_name", "unknown-model"),
             "session_duration_minutes": token_data["session_duration_minutes"],
             "voice_name": token_data["voice_name"],
             "vad_profile": token_data.get("vad_profile"),
         }
 
-    # ----------------------------------------------------------------------
-    # Conclude Session
-    # ----------------------------------------------------------------------
+    async def _reconcile_expired_session(self, session: VivaSession) -> VivaSession:
+        """Expire only records being read, avoiding a scheduled table scan.
+
+        The grace period allows final browser delivery after the provider's session
+        duration. A concurrent completion wins over our stale expiry attempt.
+        History is retained; DynamoDB TTL would delete it, not update its status.
+        """
+        now = utc_now()
+        if (
+            session.status == "in_progress"
+            and session.expires_at
+            and session.expires_at <= now
+        ):
+            session.status = "abandoned"
+            session.ended_at = now
+            try:
+                await self.repository.update_session(session)
+            except SessionConflict:
+                return await self.repository.get_session_for_user(
+                    session.user_id, session.id
+                )
+        return session
+
+    async def _get_session_with_ownership_check(
+        self, session_id: str, user_id: str
+    ) -> VivaSession:
+        session = await self.repository.get_session_for_user(user_id, session_id)
+        return await self._reconcile_expired_session(session)
+
+    @staticmethod
+    def _completion_response(session: VivaSession) -> dict:
+        if session.status != "completed" or session.feedback is None:
+            raise SessionConflict("Session is no longer active")
+        return {
+            "status": "completed",
+            "score": session.feedback.score,
+            "final_feedback": session.feedback.summary,
+        }
+
     async def conclude_viva_session(
         self,
         viva_session_id: str,
@@ -127,41 +105,17 @@ class VivaService:
         user_id: str,
         next_steps: List[str] | None = None,
         coverage_note: str | None = None,
+        transcript: str | None = None,
     ) -> dict:
+        """Persist the first successful completion and return it on duplicate delivery.
+
+        A late completion cannot revive abandonment or expiry. On a write race,
+        re-read the winning state rather than overwrite its assessment.
         """
-        Finalize a viva session by attaching AI-generated feedback,
-        updating session status, and marking the ending timestamp.
-
-        Only the session owner can conclude it.
-
-        Args:
-            viva_session_id: ID of the viva session to conclude.
-            score: Final evaluation score assigned by the AI.
-            summary: Summary feedback and narrative evaluation.
-            strong_points: Topics the student performed well in.
-            areas_of_improvement: Topics needing improvement.
-            user_id: The authenticated user ID (must be session owner).
-
-        Returns:
-            dict: Minimal response confirming completion and including score.
-
-        Raises:
-            ValueError: If the session does not exist or ID is invalid.
-            PermissionError: If the user does not own the session.
-        """
-        # Validate and get session with ownership check
         session = await self._get_session_with_ownership_check(viva_session_id, user_id)
         if session.status != "in_progress":
-            if session.status == "completed" and session.feedback:
-                return {
-                    "status": "completed",
-                    "score": session.feedback.score,
-                    "final_feedback": session.feedback.summary,
-                }
-            raise ValueError("Session is no longer active")
-
-        # Construct feedback object
-        feedback_data = VivaFeedback(
+            return self._completion_response(session)
+        session.feedback = VivaFeedback(
             score=score,
             summary=summary,
             strong_points=strong_points,
@@ -169,254 +123,86 @@ class VivaService:
             next_steps=next_steps or [],
             coverage_note=coverage_note,
         )
-
-        result = await VivaSession.get_motor_collection().update_one(
-            {"_id": session.id, "user_id": user_id, "status": "in_progress"},
-            {
-                "$set": {
-                    "feedback": feedback_data.model_dump(),
-                    "status": "completed",
-                    "ended_at": datetime.datetime.now(tz=datetime.timezone.utc),
-                }
-            },
-        )
-        if not result.modified_count:
-            current = await self._get_session_with_ownership_check(
-                viva_session_id, user_id
+        session.transcript = transcript
+        session.status = "completed"
+        session.ended_at = utc_now()
+        try:
+            await self.repository.update_session(session)
+        except SessionConflict:
+            # A concurrent completion keeps its original assessment; an abandon
+            # or expiry winner cannot be revived by a late browser request.
+            session = await self.repository.get_session_for_user(
+                user_id, viva_session_id
             )
-            if current.status == "completed" and current.feedback:
-                return {
-                    "status": "completed",
-                    "score": current.feedback.score,
-                    "final_feedback": current.feedback.summary,
-                }
-            raise ValueError("Session is no longer active")
-        logger.info("Session %s concluded by user %s", viva_session_id, user_id)
-
-        return {
-            "status": "completed",
-            "score": score,
-            "final_feedback": summary,
-        }
+        return self._completion_response(session)
 
     async def abandon_viva_session(self, session_id: str, user_id: str) -> dict:
         session = await self._get_session_with_ownership_check(session_id, user_id)
-        await VivaSession.get_motor_collection().update_one(
-            {"_id": session.id, "user_id": user_id, "status": "in_progress"},
-            {
-                "$set": {
-                    "status": "abandoned",
-                    "ended_at": datetime.datetime.now(tz=datetime.timezone.utc),
-                }
-            },
-        )
-        current = await VivaSession.get(session.id)
-        return {"status": current.status}
+        if session.status == "in_progress":
+            session.status = "abandoned"
+            session.ended_at = utc_now()
+            try:
+                await self.repository.update_session(session)
+            except SessionConflict:
+                session = await self.repository.get_session_for_user(
+                    user_id, session_id
+                )
+        return {"status": session.status}
 
-    async def _reconcile_expired_sessions(
-        self, user_id: str | None = None, session_id: ObjectId | None = None
-    ) -> None:
-        now = datetime.datetime.now(tz=datetime.timezone.utc)
-        criteria = {
-            "status": "in_progress",
-            "$or": [
-                {"expires_at": {"$lte": now}},
-                {
-                    "expires_at": None,
-                    "started_at": {"$lte": now - LEGACY_SESSION_LIFETIME},
-                },
-            ],
-        }
-        if user_id is not None:
-            criteria["user_id"] = user_id
-        if session_id is not None:
-            criteria["_id"] = session_id
-        await VivaSession.get_motor_collection().update_many(
-            criteria, {"$set": {"status": "abandoned", "ended_at": now}}
-        )
-
-    # ----------------------------------------------------------------------
-    # Get Session Details
-    # ----------------------------------------------------------------------
-    async def get_viva_session_details(self, session_id: str) -> dict:
-        """
-        Retrieve complete metadata for a specific viva session.
-
-        This is a public method - no ownership check required.
-
-        Args:
-            session_id: The unique ID of the session.
-
-        Returns:
-            dict: Fully serialized session data including timestamps,
-                class info, and feedback (if available).
-
-        Raises:
-            ValueError: If no session matches the provided ID or ID is invalid.
-        """
-        # Validate ObjectId format
-        try:
-            object_id = ObjectId(session_id)
-        except InvalidId:
-            raise ValueError(f"Invalid session ID format: {session_id}")
-
-        await self._reconcile_expired_sessions(session_id=object_id)
-        session = await VivaSession.get(object_id)
-        if not session:
-            raise ValueError(f"Viva session {session_id} not found")
-
-        # Storage and response feedback are distinct Pydantic models.
+    async def get_viva_session_details(self, session_id: str, user_id: str) -> dict:
+        session = await self._get_session_with_ownership_check(session_id, user_id)
         return {
-            "viva_session_id": str(session.id),
-            "student_name": session.student_name,
-            "title": session.title,
-            "topic": session.topic,
-            "class_level": session.class_level,
-            "started_at": session.started_at,
-            "ended_at": session.ended_at,
-            "status": session.status,
-            "feedback": session.feedback.model_dump() if session.feedback else None,
+            "viva_session_id": session.id,
+            **session.model_dump(
+                include={
+                    "student_name",
+                    "title",
+                    "topic",
+                    "class_level",
+                    "started_at",
+                    "ended_at",
+                    "status",
+                    "feedback",
+                    "transcript",
+                }
+            ),
         }
 
-    # ----------------------------------------------------------------------
-    # User History
-    # ----------------------------------------------------------------------
-    async def get_user_history(self, user_id: str) -> list[dict]:
-        """
-        Retrieve the viva session history for a specific user.
-
-        Sessions are sorted by most recent first.
-
-        Args:
-            user_id (str): ID of the user whose sessions are being queried.
-
-        Returns:
-            list[dict]: A list of lightweight session summaries.
-        """
-        await self._reconcile_expired_sessions(user_id=user_id)
-        sessions = (
-            await VivaSession.find(VivaSession.user_id == user_id)
-            .sort(-VivaSession.started_at)
-            .to_list()
+    async def get_user_history(
+        self, user_id: str, limit: int = 20, cursor: str | None = None
+    ) -> dict:
+        sessions, next_cursor = await self.repository.list_sessions_for_user(
+            user_id, limit, cursor
         )
-
         history = []
         for session in sessions:
+            session = await self._reconcile_expired_session(session)
             history.append(
                 {
-                    "viva_session_id": str(session.id),
-                    "title": session.title,
-                    "topic": session.topic,
-                    "class_level": session.class_level,
-                    "started_at": session.started_at,
-                    "session_type": session.session_type,
-                    "status": session.status,
+                    "viva_session_id": session.id,
+                    **session.model_dump(
+                        include={
+                            "title",
+                            "topic",
+                            "class_level",
+                            "started_at",
+                            "session_type",
+                            "status",
+                        }
+                    ),
                 }
             )
+        return {"sessions": history, "next_cursor": next_cursor}
 
-        return history
-
-    # ----------------------------------------------------------------------
-    # Ownership Validation Helper
-    # ----------------------------------------------------------------------
-    async def _get_session_with_ownership_check(
-        self,
-        session_id: str,
-        user_id: str,
-    ) -> "VivaSession":
-        """
-        Retrieve a session and verify the authenticated user owns it.
-
-        Args:
-            session_id: The session to retrieve.
-            user_id: The user ID from the JWT token.
-
-        Returns:
-            VivaSession: The session if found and owned by the user.
-
-        Raises:
-            ValueError: If the session does not exist or ID format is invalid.
-            PermissionError: If the user does not own the session.
-        """
-        # Validate ObjectId format
-        try:
-            object_id = ObjectId(session_id)
-        except InvalidId:
-            raise ValueError(f"Invalid session ID format: {session_id}")
-
-        session = await VivaSession.get(object_id)
-        if not session:
-            raise ValueError(f"Viva session {session_id} not found")
-
-        if session.user_id != user_id:
-            logger.warning(
-                "User %s attempted to access session %s owned by %s",
-                user_id,
-                session_id,
-                session.user_id,
-            )
-            raise PermissionError("You do not have permission to modify this session")
-
-        return session
-
-    # ----------------------------------------------------------------------
-    # Rename Session
-    # ----------------------------------------------------------------------
     async def rename_session(
-        self,
-        session_id: str,
-        new_title: str,
-        user_id: str,
+        self, session_id: str, new_title: str, user_id: str
     ) -> dict:
-        """
-        Update the title of an existing viva session.
-
-        Only the session owner can rename it.
-
-        Args:
-            session_id: ID of the session to rename.
-            new_title: New title to assign.
-            user_id: The user ID from the JWT token.
-
-        Returns:
-            dict: Operation status and confirmation message.
-
-        Raises:
-            ValueError: If the session does not exist.
-            PermissionError: If the user does not own the session.
-        """
         session = await self._get_session_with_ownership_check(session_id, user_id)
-
         session.title = new_title
-        await session.save()
-
+        await self.repository.update_session(session)
         return {"status": "success", "message": "Session renamed successfully"}
 
-    # ----------------------------------------------------------------------
-    # Delete Session
-    # ----------------------------------------------------------------------
-    async def delete_session(
-        self,
-        session_id: str,
-        user_id: str,
-    ) -> dict:
-        """
-        Permanently delete a viva session from the system.
-
-        Only the session owner can delete it.
-
-        Args:
-            session_id: ID of the session to delete.
-            user_id: The user ID from the JWT token.
-
-        Returns:
-            dict: Operation status and confirmation message.
-
-        Raises:
-            ValueError: If the session does not exist.
-            PermissionError: If the user does not own the session.
-        """
-        session = await self._get_session_with_ownership_check(session_id, user_id)
-
-        await session.delete()
+    async def delete_session(self, session_id: str, user_id: str) -> dict:
+        session = await self.repository.get_session_for_user(user_id, session_id)
+        await self.repository.delete_session(session)
         return {"status": "success", "message": "Session deleted successfully"}

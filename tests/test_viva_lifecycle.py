@@ -5,127 +5,94 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services import viva_service as module
+from app.db.models import VivaSession, utc_now
+from app.db.session_repository import SessionConflict
 from app.services.viva_service import VivaService
 
 
-SESSION_ID = "507f1f77bcf86cd799439011"
+def session(**changes):
+    return VivaSession(
+        user_id="owner",
+        student_name="Student",
+        title="Plants",
+        topic="Plants",
+        class_level="7",
+        **changes,
+    )
 
 
-def test_token_failure_never_creates_in_progress_record(monkeypatch):
-    insert = AsyncMock()
-    monkeypatch.setattr(module, "VivaSession", lambda **_: SimpleNamespace(insert=insert))
+def test_token_failure_never_creates_record():
+    repository = SimpleNamespace(create_session=AsyncMock())
     service = VivaService(
         SimpleNamespace(
             create_ephemeral_token=AsyncMock(side_effect=RuntimeError("failed"))
-        )
+        ),
+        repository,
     )
     with pytest.raises(RuntimeError):
+        asyncio.run(service.start_new_viva_session(SimpleNamespace(), "owner"))
+    repository.create_session.assert_not_awaited()
+
+
+@pytest.mark.parametrize("state", ["completed", "abandoned"])
+def test_abandon_preserves_terminal_results(state):
+    saved = session(status=state)
+    repository = SimpleNamespace(
+        get_session_for_user=AsyncMock(return_value=saved), update_session=AsyncMock()
+    )
+    result = asyncio.run(
+        VivaService(SimpleNamespace(), repository).abandon_viva_session(
+            saved.id, "owner"
+        )
+    )
+    assert result == {"status": state}
+    repository.update_session.assert_not_awaited()
+
+
+def test_abandon_marks_active_session_without_feedback():
+    saved = session()
+    repository = SimpleNamespace(
+        get_session_for_user=AsyncMock(return_value=saved), update_session=AsyncMock()
+    )
+    result = asyncio.run(
+        VivaService(SimpleNamespace(), repository).abandon_viva_session(
+            saved.id, "owner"
+        )
+    )
+    assert result == {"status": "abandoned"}
+    assert saved.feedback is None
+    assert saved.ended_at is not None
+
+
+def test_expiry_targets_only_active_session_and_honors_concurrent_completion():
+    saved = session(expires_at=utc_now() - datetime.timedelta(seconds=1))
+    winner = saved.model_copy(update={"status": "completed"})
+    repository = SimpleNamespace(
+        get_session_for_user=AsyncMock(return_value=winner),
+        update_session=AsyncMock(side_effect=SessionConflict()),
+    )
+    result = asyncio.run(
+        VivaService(SimpleNamespace(), repository)._reconcile_expired_session(saved)
+    )
+    assert result.status == "completed"
+    assert repository.update_session.await_args.args[0].status == "abandoned"
+
+
+def test_conclusion_does_not_complete_after_abandon_wins():
+    saved = session()
+    winner = saved.model_copy(update={"status": "abandoned"})
+    repository = SimpleNamespace(
+        get_session_for_user=AsyncMock(side_effect=[saved, winner]),
+        update_session=AsyncMock(side_effect=SessionConflict()),
+    )
+    with pytest.raises(SessionConflict, match="no longer active"):
         asyncio.run(
-            service.start_new_viva_session(
-                SimpleNamespace(
-                    student_name="a", topic="b", class_level="1", session_type="viva"
-                ),
+            VivaService(SimpleNamespace(), repository).conclude_viva_session(
+                saved.id,
+                8,
+                "feedback",
+                [],
+                [],
                 "owner",
             )
         )
-    insert.assert_not_awaited()
-
-
-def test_abandon_is_owner_scoped_and_preserves_completed_result(monkeypatch):
-    session = SimpleNamespace(id=SESSION_ID, status="completed")
-    update = AsyncMock(return_value=SimpleNamespace(modified_count=0))
-    get = AsyncMock(return_value=session)
-    monkeypatch.setattr(
-        module,
-        "VivaSession",
-        SimpleNamespace(
-            get_motor_collection=lambda: SimpleNamespace(update_one=update),
-            get=get,
-        ),
-    )
-    service = VivaService(SimpleNamespace())
-    service._get_session_with_ownership_check = AsyncMock(return_value=session)
-    assert asyncio.run(service.abandon_viva_session(SESSION_ID, "owner")) == {
-        "status": "completed"
-    }
-    assert update.await_args.args[0] == {
-        "_id": SESSION_ID,
-        "user_id": "owner",
-        "status": "in_progress",
-    }
-
-
-def test_abandon_marks_active_session_without_feedback(monkeypatch):
-    session = SimpleNamespace(id=SESSION_ID, status="in_progress", feedback=None)
-
-    async def update_one(criteria, change):
-        assert criteria["status"] == "in_progress"
-        assert change["$set"]["status"] == "abandoned"
-        assert "feedback" not in change["$set"]
-        session.status = "abandoned"
-
-    monkeypatch.setattr(
-        module,
-        "VivaSession",
-        SimpleNamespace(
-            get_motor_collection=lambda: SimpleNamespace(update_one=update_one),
-            get=AsyncMock(return_value=session),
-        ),
-    )
-    service = VivaService(SimpleNamespace())
-    service._get_session_with_ownership_check = AsyncMock(return_value=session)
-    assert asyncio.run(service.abandon_viva_session(SESSION_ID, "owner")) == {
-        "status": "abandoned"
-    }
-    assert session.feedback is None
-
-
-def test_expiry_only_targets_in_progress_records(monkeypatch):
-    update_many = AsyncMock()
-    monkeypatch.setattr(
-        module,
-        "VivaSession",
-        SimpleNamespace(
-            get_motor_collection=lambda: SimpleNamespace(update_many=update_many)
-        ),
-    )
-    service = VivaService(SimpleNamespace())
-    asyncio.run(service._reconcile_expired_sessions(user_id="owner"))
-    criteria = update_many.await_args.args[0]
-    assert criteria["status"] == "in_progress"
-    assert criteria["user_id"] == "owner"
-    assert criteria["$or"][0]["expires_at"]["$lte"] <= datetime.datetime.now(
-        datetime.timezone.utc
-    )
-
-
-def test_conclusion_does_not_complete_after_abandon_wins(monkeypatch):
-    initially_active = SimpleNamespace(id=SESSION_ID, status="in_progress")
-    already_abandoned = SimpleNamespace(id=SESSION_ID, status="abandoned")
-    update = AsyncMock(return_value=SimpleNamespace(modified_count=0))
-    monkeypatch.setattr(
-        module,
-        "VivaSession",
-        SimpleNamespace(
-            get_motor_collection=lambda: SimpleNamespace(update_one=update)
-        ),
-    )
-    service = VivaService(SimpleNamespace())
-    service._get_session_with_ownership_check = AsyncMock(
-        side_effect=[initially_active, already_abandoned]
-    )
-
-    with pytest.raises(ValueError, match="no longer active"):
-        asyncio.run(
-            service.conclude_viva_session(
-                viva_session_id=SESSION_ID,
-                score=8,
-                summary="feedback",
-                strong_points=[],
-                areas_of_improvement=[],
-                user_id="owner",
-            )
-        )
-
-    assert update.await_args.args[0]["status"] == "in_progress"

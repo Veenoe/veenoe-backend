@@ -23,7 +23,7 @@ from app.services import viva_service as module
 from app.services.gemini_service import GeminiService
 from app.services.viva_service import VivaService
 
-SESSION_ID = "507f1f77bcf86cd799439011"
+SESSION_ID = "20261005120000000000-" + "a" * 32
 LEGACY = dict(
     score=8, summary="Explained the concept.", strong_points=[], areas_of_improvement=[]
 )
@@ -147,7 +147,7 @@ def test_historical_report_lists_remain_readable():
         assert len(model.model_validate(historical).strong_points) == 6
     assert set(
         ConcludeVivaRequest(viva_session_id=SESSION_ID, **LEGACY).model_dump()
-    ) == {"viva_session_id", *LEGACY, "next_steps", "coverage_note"}
+    ) == {"viva_session_id", *LEGACY, "next_steps", "coverage_note", "transcript"}
     # Experimental extra data does not prevent existing saved reports being read.
     assert StoredFeedback.model_validate(
         LEGACY | {"assessment": {"old": "details"}}
@@ -166,70 +166,76 @@ def test_historical_report_lists_remain_readable():
     ],
 )
 def test_report_persisted_atomically_and_duplicate_completion_keeps_first(
-    monkeypatch, race, guidance
+    race, guidance
 ):
-    session = SimpleNamespace(id=SESSION_ID, status="in_progress", feedback=None)
-    first = StoredFeedback(**LEGACY, **guidance)
+    from app.db.models import VivaSession
+    from app.db.session_repository import SessionConflict
 
-    async def update(criteria, changes):
-        assert criteria == {
-            "_id": SESSION_ID,
-            "user_id": "owner",
-            "status": "in_progress",
-        }
-        session.status = "completed"
-        session.feedback = (
-            first
-            if race
-            else StoredFeedback.model_validate(changes["$set"]["feedback"])
-        )
-        return SimpleNamespace(modified_count=0 if race else 1)
-
-    write = AsyncMock(side_effect=update)
-    monkeypatch.setattr(
-        module,
-        "VivaSession",
-        SimpleNamespace(get_motor_collection=lambda: SimpleNamespace(update_one=write)),
+    session = VivaSession(
+        id=SESSION_ID,
+        user_id="owner",
+        student_name="Student",
+        title="Plants",
+        topic="Plants",
+        class_level="7",
     )
-    service = VivaService(SimpleNamespace())
-    service._get_session_with_ownership_check = AsyncMock(return_value=session)
+    first = StoredFeedback(**LEGACY, **guidance)
+    winner = session.model_copy(update={"status": "completed", "feedback": first})
+
+    async def update(changed):
+        assert changed.user_id == "owner"
+        assert changed.status == "completed"
+        assert changed.feedback.model_dump() == first.model_dump()
+        if race:
+            raise SessionConflict()
+
+    repository = SimpleNamespace(
+        get_session_for_user=AsyncMock(
+            side_effect=[session, winner, winner] if race else [session, winner]
+        ),
+        update_session=AsyncMock(side_effect=update),
+    )
+    service = VivaService(SimpleNamespace(), repository)
     result = asyncio.run(
         service.conclude_viva_session(
-            viva_session_id=SESSION_ID, user_id="owner", **LEGACY, **guidance
+            viva_session_id=SESSION_ID,
+            user_id="owner",
+            **LEGACY,
+            **guidance,
         )
     )
-    assert result["score"] == 8
-    assert session.feedback.model_dump() == first.model_dump()
     duplicate = asyncio.run(
         service.conclude_viva_session(
-            viva_session_id=SESSION_ID, user_id="owner", **(LEGACY | {"score": 1})
+            viva_session_id=SESSION_ID,
+            user_id="owner",
+            **(LEGACY | {"score": 1}),
         )
     )
     assert duplicate == result
-    write.assert_awaited_once()
+    assert result["score"] == 8
+    repository.update_session.assert_awaited_once()
 
 
-def test_session_detail_reads_existing_report(monkeypatch):
-    import datetime
+def test_session_detail_reads_existing_report():
+    from app.db.models import VivaSession
 
-    session = SimpleNamespace(
+    session = VivaSession(
         id=SESSION_ID,
+        user_id="owner",
         student_name="Student",
-        title="Topic",
+        title="Plants",
         topic="Plants",
         class_level="7",
-        started_at=datetime.datetime.now(datetime.timezone.utc),
-        ended_at=None,
         status="completed",
         feedback=StoredFeedback(**LEGACY),
     )
-    monkeypatch.setattr(
-        module, "VivaSession", SimpleNamespace(get=AsyncMock(return_value=session))
-    )
-    service = VivaService(SimpleNamespace())
-    service._reconcile_expired_sessions = AsyncMock()
+    repository = SimpleNamespace(get_session_for_user=AsyncMock(return_value=session))
     detail = VivaSessionDetailResponse.model_validate(
-        asyncio.run(service.get_viva_session_details(SESSION_ID))
+        asyncio.run(
+            VivaService(SimpleNamespace(), repository).get_viva_session_details(
+                SESSION_ID, "owner"
+            )
+        )
     )
     assert detail.feedback.model_dump() == {
         **LEGACY,
@@ -265,6 +271,7 @@ def test_conclusion_api_validates_and_forwards_report_without_logging_contents(c
         assert conclude.await_args.kwargs["coverage_note"] == payload["coverage_note"]
         assert set(conclude.await_args.kwargs) == {
             "viva_session_id",
+            "transcript",
             "user_id",
             *LEGACY,
             "next_steps",
@@ -301,16 +308,25 @@ def test_conclusion_api_validates_and_forwards_report_without_logging_contents(c
         assert private not in caplog.text
 
 
-def test_actual_ownership_check_prevents_report_write(monkeypatch):
-    get = AsyncMock(return_value=SimpleNamespace(user_id="other-owner"))
-    monkeypatch.setattr(module, "VivaSession", SimpleNamespace(get=get))
-    service = VivaService(SimpleNamespace())
-    with pytest.raises(PermissionError):
+def test_actual_ownership_check_prevents_report_write():
+    from app.db.session_repository import SessionNotFound
+
+    repository = SimpleNamespace(
+        get_session_for_user=AsyncMock(
+            side_effect=SessionNotFound("Session not found")
+        ),
+        update_session=AsyncMock(),
+    )
+    with pytest.raises(SessionNotFound):
         asyncio.run(
-            service.conclude_viva_session(
-                viva_session_id=SESSION_ID, user_id="owner", **LEGACY
+            VivaService(SimpleNamespace(), repository).conclude_viva_session(
+                viva_session_id=SESSION_ID,
+                user_id="owner",
+                **LEGACY,
             )
         )
+    repository.get_session_for_user.assert_awaited_once_with("owner", SESSION_ID)
+    repository.update_session.assert_not_awaited()
 
 
 def test_actionable_report_fields_persist_and_read_with_existing_feedback():

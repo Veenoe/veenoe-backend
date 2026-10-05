@@ -1,285 +1,162 @@
-"""
-This module defines the API endpoints for version 1 of the 'viva' resource.
-
-The endpoints expose CRUD and workflow operations for viva sessions, including:
-    - Starting a new viva
-    - Concluding and scoring a viva
-    - Fetching user history
-    - Retrieving session details
-    - Renaming a session
-    - Deleting a session
-
-Each route interacts with the VivaService layer, ensuring separation of concerns
-between API transport logic and business logic.
-
-AUTHENTICATION:
-All endpoints require authentication. User identity is extracted from the JWT
-token, not from request parameters. This ensures:
-1. Users can only access their own data
-2. User ID cannot be spoofed by clients
-3. Consistent security model across all endpoints
-
-SECURITY (First Principles):
-1. Input validation at the API layer (fail fast)
-2. Generic error messages to clients (no internal data leaks)
-3. Full error logging server-side for debugging
-"""
+"""Authenticated session endpoints; storage errors never expose AWS responses."""
 
 import logging
-from typing import Annotated
-from fastapi import APIRouter, HTTPException, Depends, status, Path, Request
+from collections.abc import Awaitable
+from typing import Annotated, TypeVar
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+from app.api.deps import CurrentUser, get_viva_service
+from app.db.models import SESSION_ID_PATTERN
+from app.db.session_repository import (
+    RepositoryUnavailable,
+    SessionConflict,
+    SessionNotFound,
+    SessionTooLarge,
+)
 from app.schemas.viva import (
-    VivaStartRequest,
-    VivaStartResponse,
     ConcludeVivaRequest,
     ConcludeVivaResponse,
     HistoryResponse,
     RenameSessionRequest,
     VivaSessionDetailResponse,
+    VivaStartRequest,
+    VivaStartResponse,
 )
-from app.api.deps import get_viva_service, CurrentUser
 from app.services.viva_service import VivaService
-from app.services.gemini_service import GeminiTokenCreationError
 
 logger = logging.getLogger(__name__)
-
-# Rate limiter instance (uses same key_func as main app)
-limiter = Limiter(key_func=get_remote_address)
-
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
+Service = Annotated[VivaService, Depends(get_viva_service)]
+SessionIdPath = Annotated[str, Path(pattern=SESSION_ID_PATTERN, max_length=53)]
+T = TypeVar("T")
 
-# ---------------------------------------------------------------------------
-# Common Path Parameter Validation
-# ---------------------------------------------------------------------------
-# MongoDB ObjectId is 24 hex characters. Validate at API layer to fail fast.
-SessionIdPath = Annotated[
-    str,
-    Path(
-        min_length=24,
-        max_length=24,
-        pattern=r"^[a-fA-F0-9]{24}$",
-        description="MongoDB ObjectId (24 hex characters)",
-        examples=["507f1f77bcf86cd799439011"],
-    ),
-]
+
+async def _run(operation: Awaitable[T], event: str, failure: str) -> T:
+    """Translate domain errors consistently without logging tokens or session text.
+
+    Missing and foreign sessions share 404. Conflicts require refreshing state;
+    unavailable storage is retryable, but retries do not bypass write conditions.
+    """
+    try:
+        return await operation
+    except SessionNotFound:
+        raise HTTPException(404, "Session not found") from None
+    except SessionConflict:
+        raise HTTPException(
+            409, "Session changed or is no longer active. Refresh and retry."
+        ) from None
+    except SessionTooLarge:
+        raise HTTPException(413, "Session data exceeds the supported size.") from None
+    except RepositoryUnavailable:
+        logger.error("event=%s error_type=RepositoryUnavailable", event)
+        raise HTTPException(
+            503, "Session storage is temporarily unavailable. Please retry."
+        ) from None
+    except PermissionError:
+        raise HTTPException(
+            403, "You do not have permission to modify this session"
+        ) from None
+    except Exception as error:
+        logger.error("event=%s error_type=%s", event, type(error).__name__)
+        raise HTTPException(500, failure) from None
 
 
 @router.post("/start", response_model=VivaStartResponse)
-@limiter.limit("5/minute")  # Protect Gemini API quota
+@limiter.limit("5/minute")
 async def start_viva(
-    request: Request,  # Required by SlowAPI
+    request: Request,
     viva_request: VivaStartRequest,
-    service: Annotated[VivaService, Depends(get_viva_service)],
+    service: Service,
     current_user: CurrentUser,
 ):
-    """
-    Start a new viva session.
-
-    AUTHENTICATION REQUIRED: The user_id is extracted from the JWT token,
-    not from the request body.
-
-    Args:
-        request: FastAPI Request object (required by SlowAPI)
-        viva_request: Session metadata (topic, class level, student name)
-        service: Injected VivaService
-        current_user: Authenticated user from JWT
-
-    Returns:
-        VivaStartResponse: Session ID and AI connection parameters
-    """
-    try:
-        response_data = await service.start_new_viva_session(
-            viva_request=viva_request,
-            user_id=current_user.user_id,
-        )
-        return VivaStartResponse(**response_data)
-    except GeminiTokenCreationError:
-        logger.error(
-            "event=viva_start_failed error_type=GeminiTokenCreationError"
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to start session. Please try again.",
-        ) from None
-    except Exception as e:
-        # Avoid logging exception content or traceback, which may contain request data.
-        logger.error(
-            "event=viva_start_failed error_type=%s",
-            type(e).__name__,
-        )
-        # Return generic message to client (no internal details)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to start session. Please try again.",
-        ) from None
+    return await _run(
+        service.start_new_viva_session(
+            viva_request=viva_request, user_id=current_user.user_id
+        ),
+        "viva_start_failed",
+        "Failed to start session. Please try again.",
+    )
 
 
 @router.post("/conclude-viva", response_model=ConcludeVivaResponse)
 async def conclude_viva(
-    request: ConcludeVivaRequest,
-    service: Annotated[VivaService, Depends(get_viva_service)],
-    current_user: CurrentUser,
+    request: ConcludeVivaRequest, service: Service, current_user: CurrentUser
 ):
-    """
-    Conclude an active viva session and generate structured feedback.
-
-    AUTHENTICATION REQUIRED. Only the session owner can conclude.
-    """
-    try:
-        result = await service.conclude_viva_session(
-            viva_session_id=request.viva_session_id,
-            score=request.score,
-            summary=request.summary,
-            strong_points=request.strong_points,
-            areas_of_improvement=request.areas_of_improvement,
-            next_steps=request.next_steps,
-            coverage_note=request.coverage_note,
-            user_id=current_user.user_id,
-        )
-        return ConcludeVivaResponse(**result)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        logger.error("event=viva_conclude_failed error_type=%s", type(e).__name__)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to conclude session. Please try again.",
-        )
+    return await _run(
+        service.conclude_viva_session(
+            **request.model_dump(), user_id=current_user.user_id
+        ),
+        "viva_conclude_failed",
+        "Failed to conclude session. Please try again.",
+    )
 
 
 @router.get("/history", response_model=HistoryResponse)
 async def get_history(
-    service: Annotated[VivaService, Depends(get_viva_service)],
+    service: Service,
     current_user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    cursor: Annotated[
+        str | None, Query(pattern=SESSION_ID_PATTERN, max_length=53)
+    ] = None,
 ):
-    """
-    Retrieve the complete viva history for the authenticated user.
-
-    AUTHENTICATION REQUIRED. User ID comes from JWT, not URL parameter.
-    This is more secure than /history/{user_id}.
-
-    Returns:
-        HistoryResponse: List of session summaries for the authenticated user
-    """
-    try:
-        sessions = await service.get_user_history(current_user.user_id)
-        return HistoryResponse(sessions=sessions)
-    except Exception as e:
-        logger.exception("Error fetching history for user %s", current_user.user_id)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to fetch history. Please try again.",
-        )
+    return await _run(
+        service.get_user_history(current_user.user_id, limit, cursor),
+        "viva_history_failed",
+        "Failed to fetch history. Please try again.",
+    )
 
 
 @router.post("/{session_id}/abandon")
 async def abandon_session(
-    session_id: SessionIdPath,
-    service: Annotated[VivaService, Depends(get_viva_service)],
-    current_user: CurrentUser,
+    session_id: SessionIdPath, service: Service, current_user: CurrentUser
 ):
-    try:
-        return await service.abandon_viva_session(session_id, current_user.user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception:
-        logger.exception("Error abandoning viva session")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to end session. Please try again.",
-        )
+    return await _run(
+        service.abandon_viva_session(session_id, current_user.user_id),
+        "viva_abandon_failed",
+        "Failed to end session. Please try again.",
+    )
 
 
 @router.get("/{session_id}", response_model=VivaSessionDetailResponse)
 async def get_session_details(
-    session_id: SessionIdPath,
-    service: Annotated[VivaService, Depends(get_viva_service)],
+    session_id: SessionIdPath, service: Service, current_user: CurrentUser
 ):
-    """
-    Retrieve full details for a specific viva session.
-
-    PUBLIC ENDPOINT - No authentication required.
-    This allows users to share session URLs with others.
-    """
-    try:
-        return await service.get_viva_session_details(session_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.exception("Error fetching session details for %s", session_id)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to fetch session details. Please try again.",
-        )
+    return await _run(
+        service.get_viva_session_details(session_id, current_user.user_id),
+        "viva_details_failed",
+        "Failed to fetch session details. Please try again.",
+    )
 
 
 @router.patch("/{session_id}/rename")
 async def rename_session_endpoint(
     session_id: SessionIdPath,
     request: RenameSessionRequest,
-    service: Annotated[VivaService, Depends(get_viva_service)],
+    service: Service,
     current_user: CurrentUser,
 ):
-    """
-    Rename an existing viva session.
-
-    AUTHENTICATION REQUIRED. Only the session owner can rename.
-    """
-    try:
-        return await service.rename_session(
+    return await _run(
+        service.rename_session(
             session_id=session_id,
             new_title=request.new_title,
             user_id=current_user.user_id,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        logger.exception(
-            "Error renaming session %s for user %s",
-            session_id,
-            current_user.user_id,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to rename session. Please try again.",
-        )
+        ),
+        "viva_rename_failed",
+        "Failed to rename session. Please try again.",
+    )
 
 
 @router.delete("/{session_id}")
 async def delete_session_endpoint(
-    session_id: SessionIdPath,
-    service: Annotated[VivaService, Depends(get_viva_service)],
-    current_user: CurrentUser,
+    session_id: SessionIdPath, service: Service, current_user: CurrentUser
 ):
-    """
-    Permanently delete a viva session.
-
-    AUTHENTICATION REQUIRED. Only the session owner can delete.
-    """
-    try:
-        return await service.delete_session(
-            session_id=session_id,
-            user_id=current_user.user_id,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        logger.exception(
-            "Error deleting session %s for user %s",
-            session_id,
-            current_user.user_id,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to delete session. Please try again.",
-        )
+    return await _run(
+        service.delete_session(session_id=session_id, user_id=current_user.user_id),
+        "viva_delete_failed",
+        "Failed to delete session. Please try again.",
+    )

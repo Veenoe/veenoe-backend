@@ -25,14 +25,14 @@ class Settings(BaseSettings):
     environment variables or the .env file.
     """
 
-    # MongoDB connection string
-    MONGO_URI: str = Field(..., description="MongoDB connection string")
+    DYNAMODB_TABLE_NAME: str = Field(..., min_length=3)
+    # Set only for DynamoDB Local. Real DEV/PROD use the regional AWS endpoint
+    # and their own table names; a local process may target DEV with DEV IAM.
+    DYNAMODB_ENDPOINT_URL: str | None = None
+    AWS_REGION: str = "ap-south-1"
 
     # Google AI Studio API Key
     GOOGLE_API_KEY: str = Field(..., description="Google AI Studio API Key")
-
-    # The name of the MongoDB database to use
-    MONGO_DB_NAME: str = Field(..., description="MongoDB database name")
 
     # Production Frontend URL (optional, for CORS)
     FRONTEND_URL: Optional[str] = Field(
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     )
 
     # Configure the settings to load from a .env file
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     def __init__(self, **values):
         runtime_config = load_runtime_config()

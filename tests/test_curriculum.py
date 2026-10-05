@@ -37,7 +37,7 @@ def selection_request(context=None, **fields):
         topic="Acids and Bases",
         class_level="7",
         curriculum_selection=context or CURRICULUM_SELECTION,
-        **fields
+        **fields,
     )
 
 
@@ -120,13 +120,7 @@ def test_selection_class_must_match_request():
 
 
 def test_selection_is_persisted_without_losing_topics(monkeypatch):
-    captured = {}
-
-    def session(**fields):
-        captured.update(fields)
-        return SimpleNamespace(id="session", insert=AsyncMock())
-
-    monkeypatch.setattr(module, "VivaSession", session)
+    repository = SimpleNamespace(create_session=AsyncMock())
     llm = SimpleNamespace(
         create_ephemeral_token=AsyncMock(
             return_value=dict(
@@ -137,9 +131,11 @@ def test_selection_is_persisted_without_losing_topics(monkeypatch):
             )
         )
     )
-    selected = selection_request()
-    asyncio.run(VivaService(llm).start_new_viva_session(selected, "user"))
-    assert captured["curriculum_selection"].model_dump() == CURRICULUM_SELECTION
+    asyncio.run(
+        VivaService(llm, repository).start_new_viva_session(selection_request(), "user")
+    )
+    saved = repository.create_session.await_args.args[0]
+    assert saved.curriculum_selection.model_dump() == CURRICULUM_SELECTION
 
 
 def test_entire_chapter_remains_supported():
@@ -241,9 +237,6 @@ def test_saved_selection_reads_field_names_and_writes_current_name(
 ):
     from app.db.models import VivaSession
 
-    monkeypatch.setattr(
-        VivaSession, "get_motor_collection", classmethod(lambda cls: None)
-    )
     saved_session = VivaSession.model_validate(
         {
             "student_name": "Student",
@@ -343,9 +336,6 @@ def test_unversioned_saved_selection_remains_readable_without_claiming_a_revisio
 ):
     from app.db.models import VivaSession
 
-    monkeypatch.setattr(
-        VivaSession, "get_motor_collection", classmethod(lambda cls: None)
-    )
     selection = {
         k: v for k, v in CURRICULUM_SELECTION.items() if not k.startswith("catalog_")
     }

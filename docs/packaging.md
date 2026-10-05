@@ -9,7 +9,7 @@ This document describes how the `veenoe-backend` FastAPI application is packaged
 - **Runtime Model**: AWS Lambda managed runtime (`python3.12`) + ZIP deployment package + AWS Lambda Web Adapter layer (`LambdaAdapterLayerX86`).
 - **No Docker / No ECR**: Packaging produces a ZIP archive consumable directly by Terraform (`aws_lambda_function`).
 - **Zero Code Modification**: The FastAPI application is unmodified and runs with `uvicorn` inside Lambda. Invocations from API Gateway / ALB / Function URLs are translated to HTTP by the Lambda Web Adapter extension.
-- **Dependency Platform Targeting**: Several dependencies (`pydantic-core`, `pymongo`, `httptools`, `watchfiles`, `cryptography`, `cffi`, `websockets`) contain native compiled extensions. The packaging script resolves and downloads official `manylinux2014_x86_64` wheels for Python 3.12, producing Linux/x86_64-targeted dependencies suitable for the selected Lambda runtime. Actual runtime compatibility will be proven in the cloud during VEENOE-7.
+- **Dependency Platform Targeting**: Several dependencies (`pydantic-core`, `httptools`, `watchfiles`, `cryptography`, `cffi`, `websockets`) contain native compiled extensions. The packaging script resolves and downloads official `manylinux2014_x86_64` wheels for Python 3.12, producing Linux/x86_64-targeted dependencies suitable for the selected Lambda runtime. Actual runtime compatibility will be proven in the cloud during VEENOE-7.
 - **Canonical Production Build Environment**: **Linux is the canonical production build environment** because GitHub Actions CI/CD will eventually build the authoritative deployment artifact on Linux runners. The cross-platform Python build script remains available for local developer convenience on Windows and macOS, but CI/Linux produces the authoritative release artifact.
 - **Reproducible vs. Deterministic Packaging**: Because `requirements.txt` currently specifies version floors (e.g. `>=0.115.0`) rather than fully locked dependency hashes, this provides a **consistent and reproducible packaging process** rather than a strictly byte-deterministic build. Dependency-management lockfiles are intentionally not introduced in this ticket.
 
@@ -20,7 +20,7 @@ This document describes how the `veenoe-backend` FastAPI application is packaged
 - **AWS Lambda Runtime**: `python3.12`
   - Long-term support (scheduled deprecation: October 31, 2028).
   - Built on Amazon Linux 2023.
-  - Fully compatible with all current application dependencies (`pydantic` v2, `beanie` 1.30, `motor` 3.6+, `google-genai` 1.0+, `fastapi` 0.115+).
+  - Fully compatible with all current application dependencies (`pydantic` v2, `boto3`, `google-genai` 2.25.0, `fastapi` 0.115+).
 - **Target Architecture**: `x86_64`
 
 ---
@@ -89,7 +89,7 @@ When AWS Lambda initializes the function:
           "status": "healthy",
       }
   ```
-  This endpoint returns HTTP 200 immediately without requiring MongoDB connectivity, Gemini API calls, or external network reachability.
+  This endpoint returns HTTP 200 immediately without requiring DynamoDB connectivity, Gemini API calls, or external network reachability.
 - This design is optimal for Lambda Web Adapter readiness because it signals that the Uvicorn web server is ready to accept traffic without gating cold-start initialization on database latency or risking cold-start timeouts. No unnecessary application endpoints are added.
 
 ---
@@ -113,15 +113,14 @@ Verified against the `Settings` model in `app/core/config.py`:
 |---|---|---|---|
 | `AWS_LAMBDA_EXEC_WRAPPER` | Yes | Instructs Lambda to run LWA bootstrap | Fixed value: `/opt/bootstrap` |
 | `PORT` | Optional | Port Uvicorn listens on | Defaults to `8080` (matches LWA default) |
-| `MONGO_URI` | **Yes** | MongoDB connection string | Verified: application uses `MONGO_URI`, **not** `MONGODB_URI` |
-| `MONGO_DB_NAME` | **Yes** | MongoDB database name | Verified: application uses `MONGO_DB_NAME`, **not** `MONGODB_DB_NAME` |
+| `DYNAMODB_TABLE_NAME` | **Yes** | Environment-specific session table | Set by Terraform |
 | `GOOGLE_API_KEY` | **Yes** | Google AI Studio / Gemini API Key | Required by `Settings` |
 | `CLERK_SECRET_KEY` | **Yes** | Clerk authentication backend key | Required by `Settings` |
 | `FRONTEND_URL` | No | Production frontend origin for CORS | Optional (`default=None`) |
 | `CORS_ORIGINS` | No | Additional CORS origins (comma-separated) | Optional (`default=""`) |
 
 > [!IMPORTANT]
-> `app/core/config.py` instantiates `settings = Settings()` at top-level module import time. The four required variables (`MONGO_URI`, `MONGO_DB_NAME`, `GOOGLE_API_KEY`, `CLERK_SECRET_KEY`) must be configured on the Lambda function to prevent a Pydantic `ValidationError` during cold start.
+> `app/core/config.py` instantiates `settings = Settings()` at top-level module import time. The table name must be configured on Lambda; Google and Clerk secrets are loaded from the two environment-specific SSM parameters to prevent a Pydantic `ValidationError` during cold start.
 
 ---
 
@@ -131,4 +130,4 @@ The following items are explicitly deferred to subsequent tickets:
 - **VEENOE-7**: Terraform provisioning of `aws_lambda_function`, API Gateway / Function URL, CloudWatch log groups, and attaching the Lambda Web Adapter layer.
 - **Secret Management**: Injecting sensitive secrets from AWS Secrets Manager / Parameter Store into runtime environment variables.
 - **CI/CD**: Configuring permanent GitHub Actions deployment workflows using the OIDC role established in VEENOE-5.
-- **Database & Auth Migration**: MongoDB Atlas network access / VPC peering and Clerk production webhook wiring.
+- **Database & Auth Migration**: Clerk production webhook wiring; DynamoDB uses the regional AWS endpoint and the Lambda role.

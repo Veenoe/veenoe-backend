@@ -99,7 +99,7 @@ Permissions are grouped by resource type and strictly scoped to `dev` resources:
   - Actions: `apigateway:GET`, `apigateway:POST`, `apigateway:PUT`, `apigateway:PATCH`, `apigateway:DELETE`
   - Resources: `arn:aws:apigateway:ap-south-1::/apis`, `arn:aws:apigateway:ap-south-1::/apis/*`, `arn:aws:apigateway:ap-south-1::/tags/*`
 - **DynamoDB Management**:
-  - Actions: `dynamodb:CreateTable`, `dynamodb:UpdateTable`, `dynamodb:DeleteTable`, `dynamodb:DescribeTable`, `dynamodb:TagResource`, `dynamodb:UntagResource`, `dynamodb:ListTagsOfResource`
+  - Actions: `dynamodb:CreateTable`, `dynamodb:UpdateTable`, `dynamodb:DeleteTable`, `dynamodb:DescribeTable`, `dynamodb:DescribeContinuousBackups`, `dynamodb:DescribeTimeToLive`, `dynamodb:TagResource`, `dynamodb:UntagResource`, `dynamodb:ListTagsOfResource`
   - Resource: `arn:aws:dynamodb:ap-south-1:165835313361:table/veenoe-dev-*`
 - **Lambda Layer Read**:
   - Actions: `lambda:GetLayerVersion`
@@ -125,8 +125,6 @@ Permissions are grouped by resource type and strictly scoped to `dev` resources:
     - `ssm:RemoveTagsFromResource`
     - `ssm:ListTagsForResource`
   - Exact Parameter ARNs:
-    - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/mongo_uri`
-    - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/mongo_db_name`
     - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/google_api_key`
     - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/clerk_secret_key`
 - **SSM Parameter Metadata Discovery**:
@@ -180,8 +178,6 @@ Configured in [`infra/app/main.tf`](file:///d:/Veenoe/veenoe-backend/infra/app/m
 - Statement ID: `SSMGetParametersExact`
 - Action: `ssm:GetParameters` **only** (with decryption)
 - Exact Resources:
-  - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/mongo_uri`
-  - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/mongo_db_name`
   - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/google_api_key`
   - `arn:aws:ssm:ap-south-1:165835313361:parameter/veenoe/dev/clerk_secret_key`
 
@@ -208,3 +204,9 @@ Constrained strictly to GitHub Actions running under the `production` environmen
 - Manages `prod` application resources: `arn:aws:lambda:ap-south-1:165835313361:function:veenoe-prod-*`, etc.
 - State access restricted to `backend/prod/*`.
 - **VEENOE-9 Scope Boundary**: Production SSM parameter permissions are **not** created or applied as part of VEENOE-9. Production secret architecture will be formally reviewed and provisioned in a future ticket before production release.
+
+## Session table policy (VEENOE-10)
+
+Each Lambda runtime role has only `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `Query`, and `DeleteItem` on its exact `veenoe-<environment>-sessions` table ARN. There is no Scan, wildcard table ARN, index access, or table-management permission. DeleteItem serves the existing authenticated delete endpoint. The health probe uses GetItem on a nonexistent reserved key.
+
+The DEV/PROD bootstrap deploy policies add scoped `DescribeContinuousBackups` and `DescribeTimeToLive` for Terraform provider refresh. Apply bootstrap changes through an authorized operator workflow first; application roles cannot update their own bootstrap policies. See [the full runbook](dynamodb-sessions.md).

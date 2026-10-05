@@ -8,6 +8,10 @@ variable "environment" {
   type        = string
   description = "Target deployment environment (e.g. dev, prod)."
   default     = "dev"
+  validation {
+    condition     = contains(["dev", "prod"], var.environment)
+    error_message = "Environment must be dev or prod."
+  }
 }
 
 variable "lambda_memory_size" {

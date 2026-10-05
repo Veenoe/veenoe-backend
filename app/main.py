@@ -20,6 +20,7 @@ from slowapi.errors import RateLimitExceeded
 from app.db.database import init_db, close_db, verify_connection
 from app.api.api import api_router
 from app.core.config import settings
+from app.db.session_repository import RepositoryUnavailable
 
 # Configure logging
 logging.basicConfig(
@@ -72,6 +73,17 @@ app = FastAPI(
 # Attach rate limiter to app state (required by SlowAPI)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RepositoryUnavailable)
+async def storage_unavailable(request: Request, error: RepositoryUnavailable):
+    # Also handles failures while resolving the repository dependency.
+    logger.error("event=session_storage_unavailable")
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Session storage is temporarily unavailable. Please retry."},
+    )
+
 
 # Define allowed origins for CORS
 origins = [
@@ -126,8 +138,11 @@ async def health_check():
     Verifies database connectivity to provide accurate health status.
     Returns 503 Service Unavailable if database is unreachable.
     """
-    await init_db()
-    db_healthy = await verify_connection()
+    try:
+        await init_db()
+        db_healthy = await verify_connection()
+    except RepositoryUnavailable:
+        db_healthy = False
 
     if db_healthy:
         return {"status": "healthy", "database": "connected"}
