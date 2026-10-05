@@ -1,6 +1,9 @@
 resource "aws_dynamodb_table" "sessions" {
   # Fixed 5/5 capacity per environment keeps DEV + PROD at 10/10, within the
   # provisioned free allowance if other account usage and eligibility permit.
+  # This is a low-traffic starting point for small items, not guaranteed throughput
+  # for the application's size limits. Reassess before automatic transcript storage;
+  # history queries consume capacity for full items, including stored transcripts.
   # No autoscaling: sustained traffic is throttled rather than increasing spend.
   # Raise capacity or enable bounded scaling through Actions after measuring
   # throttling/latency, item sizes, and agreeing a monthly operating budget.
