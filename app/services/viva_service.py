@@ -16,6 +16,7 @@ class VivaService:
     """Apply session business rules without exposing storage expressions to routes."""
 
     def __init__(self, llm_client: LLMClient, repository: SessionRepository) -> None:
+        """Inject provider provisioning and storage without coupling routes to either implementation."""
         self.llm_client = llm_client
         self.repository = repository
 
@@ -23,6 +24,7 @@ class VivaService:
         self, viva_request: VivaStartRequest, user_id: str
     ) -> dict:
         # A failed token request must not leave a session that was never usable.
+        """Provision a usable credential before persisting the viva and its original deadline."""
         token_data = await self.llm_client.create_ephemeral_token(viva_request)
         now = utc_now()
         session = VivaSession(
@@ -54,6 +56,14 @@ class VivaService:
             "session_duration_minutes": token_data["session_duration_minutes"],
             "voice_name": token_data["voice_name"],
             "vad_profile": token_data.get("vad_profile"),
+            "google_api_version": token_data.get("google_api_version", "v1beta"),
+            "token_expires_at": token_data.get("token_expires_at"),
+            "new_session_expires_at": token_data.get("new_session_expires_at"),
+            "session_resumption_enabled": token_data.get(
+                "session_resumption_enabled", False
+            ),
+            "session_deadline_at": now
+            + datetime.timedelta(minutes=token_data["session_duration_minutes"]),
         }
 
     async def _reconcile_expired_session(self, session: VivaSession) -> VivaSession:
@@ -82,11 +92,13 @@ class VivaService:
     async def _get_session_with_ownership_check(
         self, session_id: str, user_id: str
     ) -> VivaSession:
+        """Read only the requesting user's session and reconcile any elapsed expiry."""
         session = await self.repository.get_session_for_user(user_id, session_id)
         return await self._reconcile_expired_session(session)
 
     @staticmethod
     def _completion_response(session: VivaSession) -> dict:
+        """Return the committed report; reject attempts to conclude abandoned sessions."""
         if session.status != "completed" or session.feedback is None:
             raise SessionConflict("Session is no longer active")
         return {
@@ -137,6 +149,7 @@ class VivaService:
         return self._completion_response(session)
 
     async def abandon_viva_session(self, session_id: str, user_id: str) -> dict:
+        """End an active viva without overwriting a concurrent completion or prior abandonment."""
         session = await self._get_session_with_ownership_check(session_id, user_id)
         if session.status == "in_progress":
             session.status = "abandoned"
@@ -150,6 +163,7 @@ class VivaService:
         return {"status": session.status}
 
     async def get_viva_session_details(self, session_id: str, user_id: str) -> dict:
+        """Return owned report fields after reconciling any expired active session."""
         session = await self._get_session_with_ownership_check(session_id, user_id)
         return {
             "viva_session_id": session.id,
@@ -171,6 +185,7 @@ class VivaService:
     async def get_user_history(
         self, user_id: str, limit: int = 20, cursor: str | None = None
     ) -> dict:
+        """Page through owned sessions, reconciling expiry only for records being returned."""
         sessions, next_cursor = await self.repository.list_sessions_for_user(
             user_id, limit, cursor
         )
@@ -197,12 +212,14 @@ class VivaService:
     async def rename_session(
         self, session_id: str, new_title: str, user_id: str
     ) -> dict:
+        """Change the display title while preserving the original assessment topic."""
         session = await self._get_session_with_ownership_check(session_id, user_id)
         session.title = new_title
         await self.repository.update_session(session)
         return {"status": "success", "message": "Session renamed successfully"}
 
     async def delete_session(self, session_id: str, user_id: str) -> dict:
+        """Verify ownership before removing the session and its saved report."""
         session = await self.repository.get_session_for_user(user_id, session_id)
         await self.repository.delete_session(session)
         return {"status": "success", "message": "Session deleted successfully"}
