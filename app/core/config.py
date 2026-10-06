@@ -10,9 +10,10 @@ Design Decisions (First Principles):
 3. Clear documentation for each setting.
 """
 
+from typing import Any, Literal
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Literal, Optional
 
 from app.core.runtime_config import load_runtime_config
 
@@ -39,7 +40,7 @@ class Settings(BaseSettings):
     VIVA_SESSION_DURATION_MINUTES: Literal[5, 10, 15] = 5
 
     # Production Frontend URL (optional, for CORS)
-    FRONTEND_URL: Optional[str] = Field(
+    FRONTEND_URL: str | None = Field(
         default=None, description="Production frontend URL for CORS"
     )
 
@@ -58,6 +59,14 @@ class Settings(BaseSettings):
 
     # Configure the settings to load from a .env file
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("VIVA_SESSION_DURATION_MINUTES", mode="before")
+    @classmethod
+    def parse_session_duration(cls, value: Any) -> Any:
+        """Parse integer configuration strings; Literal enforces supported durations."""
+        # Lambda and .env values are strings; Literal[int] does not coerce them.
+        # Convert only strings so numeric inputs are never truncated into valid durations.
+        return int(value) if isinstance(value, str) else value
 
     def __init__(self, **values):
         """Apply explicit settings overrides after resolving runtime configuration."""
