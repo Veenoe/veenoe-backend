@@ -21,6 +21,30 @@ The backend provisions a constrained ephemeral token. The browser receives the t
 
 ## Verification
 
+### Token provisioning recovery (2026-10-06)
+
+Token provisioning has an 18-second overall budget, an 8-second HTTP timeout,
+and at most two attempts separated by 250–750 ms of jitter. Client cleanup is
+bounded to another two seconds, leaving time for the subsequent DynamoDB write
+within the 30-second Lambda runtime. The HTTP timeout bounds individual network
+operations; the overall budget bounds the complete provisioning operation.
+
+The service owns retries explicitly; SDK retries are disabled. Temporary network
+failures and provider responses 408/429/500/502/503/504 are retryable. Invalid
+requests and credentials are not retried. Exhausted transient failures return
+HTTP 503 with sanitized diagnostics. Request cancellation closes the client
+without retrying.
+
+A disconnected token-creation POST may have already minted an unused credential.
+Each attempt builds fresh deadlines; only the successfully returned credential
+is exposed. Provisioning retries never repeat the session persistence operation.
+
+DEV verification minted an ephemeral credential, connected directly to Live with
+the constrained configuration, and received audio. This verifies compatibility;
+it does not identify which network participant caused an earlier disconnect.
+
+### Earlier verification
+
 - Backend Gemini service tests: 4 passed. Full backend suite: 24 passed; 6 packaging tests require the Lambda ZIP artifact.
 - Webapp tests: 17 passed; TypeScript and production build passed. Repository lint still reports existing errors outside modified files.
 - Developer manually verified: start viva → token → direct Live connection → voice conversation → `conclude_viva` → session completion.

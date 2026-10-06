@@ -31,6 +31,15 @@ def request(**overrides):
     return VivaStartRequest(**values)
 
 
+def test_conversation_policy_handles_help_and_listening_cues_without_restarting_questions():
+    """Keep voice repair rules in the token-owned prompt sent for every student."""
+    instruction = GeminiService().generate_system_instruction(request())
+    assert "Do not wait for a repeated request" in instruction
+    assert 'Short acknowledgments such as "mhm" or "okay"' in instruction
+    assert "do not repeat or replace the pending question" in instruction
+    assert "resume only the unfinished explanation" in instruction
+
+
 def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplog):
     token = SimpleNamespace(name="ephemeral-secret-token")
     create = AsyncMock(return_value=token)

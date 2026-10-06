@@ -4,11 +4,17 @@ Audio is streamed directly by the client; this service never owns a Live socket.
 Provider clients are request-scoped and failures expose only sanitized diagnostics.
 """
 
-import logging
+import asyncio
 import datetime
+import logging
+import random
 import time
 from dataclasses import replace
+
 import google.genai as genai
+import httpx
+from google.genai import errors, types
+
 from app.core.config import settings
 from app.schemas.viva import VivaStartRequest
 from app.services.assessment_prompt import build_assessment_instruction
@@ -19,9 +25,35 @@ from app.services.gemini_live_config import (
 
 logger = logging.getLogger(__name__)
 
+# Leave room for client cleanup and DynamoDB's bounded write in the 30s runtime.
+TOKEN_PROVISIONING_BUDGET_SECONDS = 18
+TOKEN_REQUEST_TIMEOUT_MS = 8000
+TOKEN_PROVISIONING_ATTEMPTS = 2
+
+
+def _transient_provisioning_error(error: Exception) -> bool:
+    """Retry temporary transport/provider failures, never invalid keys or setup."""
+    return isinstance(
+        error,
+        (
+            TimeoutError,
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.RemoteProtocolError,
+        ),
+    ) or (
+        isinstance(error, errors.APIError)
+        and error.code in {408, 429, 500, 502, 503, 504}
+    )
+
 
 class GeminiTokenCreationError(RuntimeError):
     """Sanitized failure raised when Gemini rejects token creation."""
+
+
+class GeminiTokenUnavailable(GeminiTokenCreationError):
+    """Provisioning exhausted its transient recovery budget; callers may retry."""
 
 
 GEMINI_LIVE_CONFIG = GeminiLiveConfig()
@@ -150,6 +182,40 @@ class GeminiService:
             viva_request, self._config.session_duration_minutes
         )
 
+    async def _provision_token(
+        self, client: genai.Client, instruction: str, request: VivaStartRequest
+    ) -> tuple[types.AuthToken, dict, str]:
+        """Recover one failed mint without persisting a viva or reusing stale deadlines.
+
+        A disconnected POST may already have minted a credential. Only the token
+        returned by a successful attempt is exposed; unused tokens expire. Retrying
+        this provisioning step must never include the subsequent session write.
+        """
+        for attempt in range(1, TOKEN_PROVISIONING_ATTEMPTS + 1):
+            token_config, voice = build_live_token_config(
+                self._config,
+                instruction,
+                [self._CONCLUDE_VIVA_TOOL],
+                request.voice_name,
+                datetime.datetime.now(tz=datetime.timezone.utc),
+            )
+            try:
+                token = await client.aio.auth_tokens.create(config=token_config)
+                return token, token_config, voice
+            except Exception as error:
+                if (
+                    not _transient_provisioning_error(error)
+                    or attempt == TOKEN_PROVISIONING_ATTEMPTS
+                ):
+                    raise
+                logger.warning(
+                    "event=gemini_ephemeral_token_retry attempt=%d error_type=%s",
+                    attempt,
+                    type(error).__name__,
+                )
+                await asyncio.sleep(random.uniform(0.25, 0.75))
+        raise AssertionError("Provisioning requires at least one attempt")
+
     async def create_ephemeral_token(self, viva_request: VivaStartRequest) -> dict:
         """
         Create a secure, short-lived ephemeral token allowing the
@@ -197,23 +263,22 @@ class GeminiService:
             # A new client is created per request to maintain async safety.
             client = genai.Client(
                 api_key=self._api_key,
-                http_options={"api_version": config.api_version},
+                http_options={
+                    "api_version": config.api_version,
+                    "timeout": TOKEN_REQUEST_TIMEOUT_MS,
+                    # One retry owner prevents multiplicative attempts and raw SDK retry logs.
+                    "retry_options": {"attempts": 1},
+                },
             )
 
             system_instruction = self.generate_system_instruction(viva_request)
-            tool_declarations = [self._CONCLUDE_VIVA_TOOL]
-
-            token_config, effective_voice = build_live_token_config(
-                config,
-                system_instruction,
-                tool_declarations,
-                viva_request.voice_name,
-                datetime.datetime.now(tz=datetime.timezone.utc),
-            )
+            async with asyncio.timeout(TOKEN_PROVISIONING_BUDGET_SECONDS):
+                token, token_config, effective_voice = await self._provision_token(
+                    client, system_instruction, viva_request
+                )
             expires_at = token_config["expire_time"]
             new_session_expires_at = token_config["new_session_expire_time"]
 
-            token = await client.aio.auth_tokens.create(config=token_config)
             if not isinstance(token.name, str) or not token.name.strip():
                 raise GeminiTokenCreationError("Gemini returned an empty credential")
 
@@ -249,12 +314,18 @@ class GeminiService:
                 config.api_version,
                 config.vad_profile.name,
             )
-            raise GeminiTokenCreationError(
-                "Gemini ephemeral token creation failed"
-            ) from None
+            failure = (
+                GeminiTokenUnavailable
+                if _transient_provisioning_error(e)
+                else GeminiTokenCreationError
+            )
+            raise failure("Gemini ephemeral token creation failed") from None
         finally:
             if client is not None:
                 try:
-                    await client.aio.aclose()
+                    # Caller cancellation still reaches cleanup; a stalled close
+                    # must not consume the runtime reserved for session storage.
+                    async with asyncio.timeout(2):
+                        await client.aio.aclose()
                 except Exception:
                     logger.warning("event=gemini_client_cleanup_failed")
