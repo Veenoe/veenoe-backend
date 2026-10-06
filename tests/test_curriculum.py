@@ -52,7 +52,9 @@ def test_one_chapter_multiple_topics_and_custom_focus_reach_the_assessment():
     assert "topic" not in data
     assert "curriculum_selection" not in data
     assert "An empty topics list\nmeans the entire chapter" in prompt
-    assert "edition or comprehensive coverage of every topic in five minutes" in prompt
+    assert (
+        "edition or comprehensive coverage of every topic in a short session" in prompt
+    )
     assert "difficulty" not in str(data)
     assert "custom-topic-1" not in str(data)
 

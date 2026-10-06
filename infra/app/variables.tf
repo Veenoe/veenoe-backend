@@ -1,3 +1,23 @@
+variable "gemini_live_model" {
+  type        = string
+  description = "Gemini Live model used to constrain ephemeral credentials."
+  default     = "gemini-3.8-live"
+  validation {
+    condition     = can(regex("^\\S+$", var.gemini_live_model))
+    error_message = "Gemini Live model must be non-empty and contain no whitespace."
+  }
+}
+
+variable "viva_session_duration_minutes" {
+  type        = number
+  description = "Fixed viva duration, configured per environment."
+  default     = 5
+  validation {
+    condition     = contains([5, 10, 15], var.viva_session_duration_minutes)
+    error_message = "Viva duration must be 5, 10, or 15 minutes."
+  }
+}
+
 variable "aws_region" {
   type        = string
   description = "AWS region to deploy the application runtime."

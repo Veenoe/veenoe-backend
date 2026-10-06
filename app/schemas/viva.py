@@ -25,6 +25,8 @@ ReportPoint = Annotated[
 
 # --- Shared Models ---
 class VivaFeedback(BaseModel):
+    """Written assessment returned with a completed viva, separate from spoken closing audio."""
+
     score: int
     summary: str
     strong_points: List[str]
@@ -163,11 +165,18 @@ class VivaStartRequest(BaseModel):
 
 
 class VivaStartResponse(BaseModel):
+    """Connection metadata for the browser; ephemeral credentials must not be persisted."""
+
     viva_session_id: str
     ephemeral_token: str
     google_model: str
     session_duration_minutes: int
     voice_name: str
+    google_api_version: str = "v1beta"
+    token_expires_at: datetime.datetime | None = None
+    new_session_expires_at: datetime.datetime | None = None
+    session_deadline_at: datetime.datetime | None = None
+    session_resumption_enabled: bool = False
     vad_profile: Optional[str] = None
 
 
@@ -175,6 +184,8 @@ class VivaStartResponse(BaseModel):
 
 
 class ConcludeVivaRequest(BaseModel):
+    """Bounded assessment payload accepted by the terminal session write."""
+
     viva_session_id: SessionId
     score: int = Field(..., ge=0, le=10)
     summary: str = Field(..., min_length=1, max_length=2000)
@@ -187,12 +198,15 @@ class ConcludeVivaRequest(BaseModel):
     @field_validator("transcript")
     @classmethod
     def bounded_transcript(cls, value: str | None) -> str | None:
+        """Limit UTF-8 bytes as well as characters so multibyte text fits the storage budget."""
         if value is not None and len(value.encode("utf-8")) > 65536:
             raise ValueError("Transcript exceeds 64 KiB")
         return value
 
 
 class ConcludeVivaResponse(BaseModel):
+    """Authoritative completion result, including the report that won any write race."""
+
     status: str = "completed"
     score: int
     final_feedback: str
@@ -202,6 +216,8 @@ class ConcludeVivaResponse(BaseModel):
 
 
 class VivaSessionSummary(BaseModel):
+    """Compact history entry that omits report contents and connection credentials."""
+
     viva_session_id: str
     title: str
     topic: str
@@ -211,8 +227,9 @@ class VivaSessionSummary(BaseModel):
     status: str
 
 
-# NEW: Schema for fetching a single full session details
 class VivaSessionDetailResponse(BaseModel):
+    """Owned session details for the saved report and optional transcript view."""
+
     viva_session_id: str
     student_name: str
     title: str
@@ -226,6 +243,8 @@ class VivaSessionDetailResponse(BaseModel):
 
 
 class HistoryResponse(BaseModel):
+    """One page of history with an opaque cursor for the next page."""
+
     sessions: list[VivaSessionSummary]
     next_cursor: str | None = None
 

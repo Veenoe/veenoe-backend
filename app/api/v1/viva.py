@@ -25,6 +25,7 @@ from app.schemas.viva import (
     VivaStartRequest,
     VivaStartResponse,
 )
+from app.services.gemini_service import GeminiTokenUnavailable
 from app.services.viva_service import VivaService
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,13 @@ async def _run(operation: Awaitable[T], event: str, failure: str) -> T:
         logger.error("event=%s error_type=RepositoryUnavailable", event)
         raise HTTPException(
             503, "Session storage is temporarily unavailable. Please retry."
+        ) from None
+    except GeminiTokenUnavailable:
+        logger.error("event=%s error_type=GeminiTokenUnavailable", event)
+        raise HTTPException(
+            503,
+            "The live service is temporarily unavailable. Please try again.",
+            headers={"Retry-After": "1"},
         ) from None
     except PermissionError:
         raise HTTPException(

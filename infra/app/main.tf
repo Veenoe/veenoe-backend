@@ -114,8 +114,10 @@ resource "aws_lambda_function" "backend" {
       AWS_LWA_INVOKE_MODE                    = "buffered"
 
       # Application runtime configuration pointer (SSM Parameter Store)
-      VEENOE_SSM_PARAMETER_PREFIX = "/veenoe/${var.environment}"
-      DYNAMODB_TABLE_NAME         = aws_dynamodb_table.sessions.name
+      VEENOE_SSM_PARAMETER_PREFIX   = "/veenoe/${var.environment}"
+      DYNAMODB_TABLE_NAME           = aws_dynamodb_table.sessions.name
+      GEMINI_LIVE_MODEL             = var.gemini_live_model
+      VIVA_SESSION_DURATION_MINUTES = tostring(var.viva_session_duration_minutes)
     }
   }
 

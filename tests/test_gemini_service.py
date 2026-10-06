@@ -31,11 +31,22 @@ def request(**overrides):
     return VivaStartRequest(**values)
 
 
+def test_conversation_policy_handles_help_and_listening_cues_without_restarting_questions():
+    """Keep voice repair rules in the token-owned prompt sent for every student."""
+    instruction = GeminiService().generate_system_instruction(request())
+    assert "Do not wait for a repeated request" in instruction
+    assert 'Short acknowledgments such as "mhm" or "okay"' in instruction
+    assert "do not repeat or replace the pending question" in instruction
+    assert "resume only the unfinished explanation" in instruction
+
+
 def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplog):
     token = SimpleNamespace(name="ephemeral-secret-token")
     create = AsyncMock(return_value=token)
     client = SimpleNamespace(
-        aio=SimpleNamespace(auth_tokens=SimpleNamespace(create=create))
+        aio=SimpleNamespace(
+            auth_tokens=SimpleNamespace(create=create), aclose=AsyncMock()
+        )
     )
     client_args = {}
 
@@ -58,15 +69,16 @@ def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplo
     assert config["uses"] == 1
     remaining = config["expire_time"] - datetime.datetime.now(datetime.timezone.utc)
     assert (
-        datetime.timedelta(minutes=14, seconds=55)
+        datetime.timedelta(minutes=7, seconds=55)
         < remaining
-        <= datetime.timedelta(minutes=15)
+        <= datetime.timedelta(minutes=8)
     )
     assert live["response_modalities"] == ["AUDIO"]
-    assert live["session_resumption"] == {}
+    assert "session_resumption" not in live
     assert live["input_audio_transcription"] == {}
     assert live["output_audio_transcription"] == {}
-    assert "lock_additional_fields" not in config  # Unmasked token setup owns VAD.
+    assert "realtimeInputConfig" in config["lock_additional_fields"]
+    assert "sessionResumption" not in config["lock_additional_fields"]
     realtime = live["realtime_input_config"]
     assert isinstance(realtime, types.RealtimeInputConfig)
     detection = realtime.automatic_activity_detection
@@ -106,6 +118,10 @@ def test_token_uses_current_live_contract_and_requested_voice(monkeypatch, caplo
         "session_duration_minutes",
         "model_name",
         "vad_profile",
+        "google_api_version",
+        "token_expires_at",
+        "new_session_expires_at",
+        "session_resumption_enabled",
     }
     assert "event=gemini_ephemeral_token_attempt" in caplog.text
     assert "event=gemini_ephemeral_token_created" in caplog.text
@@ -127,7 +143,9 @@ def test_default_voice_and_failure_logs_only_safe_metadata(monkeypatch, caplog):
     failure = RuntimeError("test_google_api_key ephemeral-secret prompt content")
     create = AsyncMock(side_effect=failure)
     client = SimpleNamespace(
-        aio=SimpleNamespace(auth_tokens=SimpleNamespace(create=create))
+        aio=SimpleNamespace(
+            auth_tokens=SimpleNamespace(create=create), aclose=AsyncMock()
+        )
     )
     monkeypatch.setattr(gemini_service.genai, "Client", lambda **_: client)
     caplog.set_level(logging.INFO, logger=gemini_service.__name__)
@@ -185,7 +203,9 @@ def test_pinned_sdk_serializes_effective_vad_token_setup(monkeypatch):
     assert response["token"] == "auth_tokens/test"
 
     payload = json.loads(json.dumps(send.await_args.args[2]))
-    assert "fieldMask" not in payload
+    assert "realtimeInputConfig" in payload["fieldMask"]
+    assert "sessionResumption" not in payload["fieldMask"]
+    assert "newSessionExpireTime" in payload
     setup = payload["bidiGenerateContentSetup"]
     assert setup["model"] == "models/gemini-3.8-live"
     assert payload["uses"] == 1
@@ -193,7 +213,7 @@ def test_pinned_sdk_serializes_effective_vad_token_setup(monkeypatch):
     assert setup["generationConfig"]["responseModalities"] == ["AUDIO"]
     assert setup["inputAudioTranscription"] == {}
     assert setup["outputAudioTranscription"] == {}
-    assert setup["sessionResumption"] == {}
+    assert "sessionResumption" not in setup
     voice = setup["generationConfig"]["speechConfig"]["voice_config"]
     assert voice["prebuilt_voice_config"]["voice_name"] == "Kore"
     assert setup["tools"][0]["functionDeclarations"][0]["behavior"] == "BLOCKING"
@@ -276,7 +296,9 @@ def test_start_endpoint_never_logs_upstream_exception_content(monkeypatch, caplo
 
     create = AsyncMock(side_effect=upstream_failure)
     client = SimpleNamespace(
-        aio=SimpleNamespace(auth_tokens=SimpleNamespace(create=create))
+        aio=SimpleNamespace(
+            auth_tokens=SimpleNamespace(create=create), aclose=AsyncMock()
+        )
     )
     monkeypatch.setattr(gemini_module.genai, "Client", lambda **_: client)
 

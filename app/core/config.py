@@ -12,7 +12,7 @@ Design Decisions (First Principles):
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from app.core.runtime_config import load_runtime_config
 
@@ -33,6 +33,10 @@ class Settings(BaseSettings):
 
     # Google AI Studio API Key
     GOOGLE_API_KEY: str = Field(..., description="Google AI Studio API Key")
+    GEMINI_LIVE_MODEL: str = Field(
+        default="gemini-3.8-live", min_length=1, pattern=r"^\S+$"
+    )
+    VIVA_SESSION_DURATION_MINUTES: Literal[5, 10, 15] = 5
 
     # Production Frontend URL (optional, for CORS)
     FRONTEND_URL: Optional[str] = Field(
@@ -56,6 +60,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     def __init__(self, **values):
+        """Apply explicit settings overrides after resolving runtime configuration."""
         runtime_config = load_runtime_config()
         merged = {**runtime_config, **values}
         super().__init__(**merged)
