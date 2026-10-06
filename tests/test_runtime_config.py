@@ -13,7 +13,9 @@ from app.core.config import Settings
 from app.core.runtime_config import load_runtime_config
 
 
-@pytest.mark.parametrize("raw, expected", [("5", 5), ("10", 10), ("15", 15)])
+@pytest.mark.parametrize(
+    "raw, expected", [("5", 5), ("10", 10), ("15", 15), (" 10 ", 10), ("015", 15)]
+)
 @pytest.mark.parametrize("source", ["environment", "dotenv", "override"])
 def test_settings_parse_supported_duration_strings(
     monkeypatch, tmp_path, raw, expected, source
@@ -35,7 +37,7 @@ def test_settings_parse_supported_duration_strings(
     assert type(settings.VIVA_SESSION_DURATION_MINUTES) is int
 
 
-@pytest.mark.parametrize("raw", ["", "0", "6", "20", "5.0", "five"])
+@pytest.mark.parametrize("raw", ["", "0", "6", "20", "5.0", "5.9", "five"])
 def test_settings_reject_invalid_environment_durations(monkeypatch, raw):
     """Invalid deployment values must fail rather than silently select a duration."""
     monkeypatch.delenv("VEENOE_SSM_PARAMETER_PREFIX", raising=False)
@@ -46,6 +48,21 @@ def test_settings_reject_invalid_environment_durations(monkeypatch, raw):
         error["loc"] == ("VIVA_SESSION_DURATION_MINUTES",)
         for error in caught.value.errors()
     )
+
+
+def test_duration_integer_override_precedes_environment(monkeypatch):
+    """Parsing environment strings must preserve explicit settings precedence."""
+    monkeypatch.delenv("VEENOE_SSM_PARAMETER_PREFIX", raising=False)
+    monkeypatch.setenv("VIVA_SESSION_DURATION_MINUTES", "5")
+    settings = Settings(_env_file=None, VIVA_SESSION_DURATION_MINUTES=10)
+    assert settings.VIVA_SESSION_DURATION_MINUTES == 10
+
+
+def test_duration_defaults_to_five_minutes(monkeypatch):
+    """Absent duration configuration retains the original viva length."""
+    monkeypatch.delenv("VEENOE_SSM_PARAMETER_PREFIX", raising=False)
+    monkeypatch.delenv("VIVA_SESSION_DURATION_MINUTES", raising=False)
+    assert Settings(_env_file=None).VIVA_SESSION_DURATION_MINUTES == 5
 
 
 def test_settings_import_with_lambda_environment(tmp_path):

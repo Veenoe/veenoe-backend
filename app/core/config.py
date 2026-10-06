@@ -63,12 +63,10 @@ class Settings(BaseSettings):
     @field_validator("VIVA_SESSION_DURATION_MINUTES", mode="before")
     @classmethod
     def parse_session_duration(cls, value: Any) -> Any:
-        """Normalize supported environment strings before integer Literal validation."""
+        """Parse integer configuration strings; Literal enforces supported durations."""
         # Lambda and .env values are strings; Literal[int] does not coerce them.
-        # Leave other inputs untouched so unsupported durations still fail validation.
-        if isinstance(value, str) and value in {"5", "10", "15"}:
-            return int(value)
-        return value
+        # Convert only strings so numeric inputs are never truncated into valid durations.
+        return int(value) if isinstance(value, str) else value
 
     def __init__(self, **values):
         """Apply explicit settings overrides after resolving runtime configuration."""
